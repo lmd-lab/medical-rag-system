@@ -62,3 +62,8 @@ data/vectorstore/*
 
 # local files
 repo.txt
+
+# rag artefacts
+faiss_index/
+chroma/
+cache/
