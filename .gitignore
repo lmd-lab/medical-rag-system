@@ -6,17 +6,27 @@
 .directory
 .Trash-*
 
+# macOS
+.DS_Store
+
+# Virtual environments
+venv/
+.env/
+.venv/
+
 # Environment vars
 .env
+*.env
 
 # notebooks
 *.ipynb
+.ipynb_checkpoints/
 
 # Python
 .vscode/
-.venv/
 __pycache__/
 *.pyc
+*.py[cod]
 .pytest_cache/
 .mypy_cache/
 
@@ -24,14 +34,31 @@ __pycache__/
 *.log
 logs/
 
+# Streamlit cache
+.streamlit/
+
+# Temporary files
+*.tmp
+
 # local outputs
 json/
 
 # data folder but keep structure
-data/*
-!data/.gitkeep
-vectorstore/
+data/raw/*
+!data/raw/.gitkeep
+
+data/processed/*
+!data/processed/.gitkeep
+
+data/vectorstore/*
+!data/vectorstore/.gitkeep
+
+# vector database files
 *.db
 *.index
 
+# PDFs
+*.pdf
+
+# local files
 repo.txt
