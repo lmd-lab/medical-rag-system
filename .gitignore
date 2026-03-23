@@ -1,0 +1,35 @@
+# temporary files
+.fuse_hidden*
+.nfs*
+
+# Linux / KDE
+.directory
+.Trash-*
+
+# Environment vars
+.env
+
+# notebooks
+*.ipynb
+
+# Python
+.vscode/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+
+# logs
+*.log
+logs/
+
+# local outputs
+json/
+
+# data folder but keep structure
+data/*
+!data/.gitkeep
+vectorstore/
+*.db
+*.index
