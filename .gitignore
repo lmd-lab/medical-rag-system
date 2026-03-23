@@ -33,3 +33,5 @@ data/*
 vectorstore/
 *.db
 *.index
+
+repo.txt
