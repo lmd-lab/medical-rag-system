@@ -76,6 +76,37 @@ First Steps
  Test retrieval
  Build simple UI
 
+## Installation & Setup
+
+This project uses **Conda** to manage the Python environment and its dependencies (including specialized libraries for vector search and PDF processing).
+
+### 1. Prerequisites
+Ensure you have [Conda](https://docs.conda.io/en/latest/miniconda.html) or [Mamba](https://mamba.readthedocs.io/) installed on your system.
+
+### 2. Create the Environment
+The environment is defined in the `environment.yml` file. To create it, run:
+
+```bash
+conda env create -f environment.yml
+```
+
+### 3. Activate the Environment
+
+Once the installation is complete, activate the environment using:
+Bash
+```bash
+conda activate rag-project
+```
+
+### 4. Keeping the Environment Updated
+
+If the environment.yml is updated, you can synchronize your local environment by running:
+Bash
+
+```bash
+conda env update -f environment.yml --prune
+```
+
 ## Notes
 
 This project is intentionally developed iteratively.
