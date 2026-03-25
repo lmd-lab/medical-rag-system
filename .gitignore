@@ -30,6 +30,10 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 
+# PyCharm / IntelliJ IDEA
+.idea/
+*.iml
+
 # logs
 *.log
 logs/
