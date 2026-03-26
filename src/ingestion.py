@@ -7,10 +7,46 @@ import pymupdf
 # TODO: add OCR extraction for PDFs with low text quality - metadata may be false too
 # TODO: table handling
 
-def clean_text(text: str) -> str:
-    text = text.replace("\xa0", " ")
-    text = text.replace("\u00ad", "")
-    return text
+def normalize_text(text: str) -> str:
+        # Normalize line endings first
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+        # Replace common spacing artifacts with regular spaces
+        text = text.replace("\xa0", " ")  # NBSP = Non-Breaking Space
+        text = text.replace("\u2002", " ")  # ENSP = En Space
+        text = text.replace("\u2003", " ")  # EMSP = Em Space
+        text = text.replace("\u2009", " ")  # THSP = Thin Space
+
+        # Remove invisible / soft formatting artifacts
+        text = text.replace("\u200b", "")  # ZWSP = Zero Width Space
+        text = text.replace("\u00ad", "")  # SHY = Soft Hyphen
+
+        # Remove control characters that are usually extraction noise
+        text = text.replace("\x01", "")  # SOH = Start Of Heading
+        text = text.replace("\x02", "")  # STX = Start Of Text
+        text = text.replace("\x03", "")  # ETX = End Of Text
+        text = text.replace("\x04", "")  # EOT = End Of Transmission
+
+        # Clean each line without destroying the paragraph structure
+        lines = []
+        for line in text.split("\n"):
+            line = " ".join(line.split())  # collapse repeated spaces/tabs in the line
+            lines.append(line)
+
+        # Rebuild text and remove excessive blank lines
+        cleaned_lines = []
+        blank_count = 0
+
+        for line in lines:
+            if line == "":
+                blank_count += 1
+                if blank_count <= 1:
+                    cleaned_lines.append("")
+            else:
+                blank_count = 0
+                cleaned_lines.append(line)
+
+        return "\n".join(cleaned_lines).strip()
 
 def classify_text_quality(text: str) -> str:
     if not text.strip():
@@ -26,20 +62,19 @@ def classify_text_quality(text: str) -> str:
 
     return "good"
 
-def extract_text_with_ocr(pdf_path: Path) -> str:
+def extract_text_with_ocr() -> str:
     return "OCR placeholder"
 
 def extract_text_from_pdf(pdf_path: Path) -> dict[str, Any]:
-    with pymupdf.open(pdf_path) as doc:
-        raw_text = "".join(page.get_text() for page in doc)
-        metadata = doc.metadata
+    with pymupdf.open(pdf_path) as pdf_doc:
+        raw_text = "".join(page.get_text() for page in pdf_doc)
+        metadata = pdf_doc.metadata
 
-    cleaned_text = clean_text(raw_text)
-
+    cleaned_text = normalize_text(raw_text)
     quality = classify_text_quality(cleaned_text)
 
     if quality in {"empty", "artifact"}:
-        cleaned_text = extract_text_with_ocr(pdf_path)
+        cleaned_text = extract_text_with_ocr()
         processing_method = "ocr"
     else:
         processing_method = "text"
@@ -53,17 +88,17 @@ def extract_text_from_pdf(pdf_path: Path) -> dict[str, Any]:
         "processing_method": processing_method,
     }
 
-def load_all_pdfs(folder_path: Path) -> list[dict[str, Any]] | None:
-    try:
-        pdf_documents: list[dict[str, Any]] = []
+def load_all_pdfs(folder_path: Path) -> list[dict[str, Any]]:
+    pdf_documents: list[dict[str, Any]] = []
 
-        for pdf_file in folder_path.glob("*.pdf"):
+    for pdf_file in folder_path.glob("*.pdf"):
+        try:
             print(f"Processing: {pdf_file.name}")
             pdf_documents.append(extract_text_from_pdf(pdf_file))
+        except Exception as e:
+            print(f"Failed: {pdf_file.name} -> {e}")
 
-        return pdf_documents
-    except Exception as e:
-        print(f"Failed: {pdf_file.name} -> {e}")
+    return pdf_documents
 
 def save_documents_to_processed(
     documents: list[dict[str, Any]],
@@ -96,7 +131,7 @@ if __name__ == "__main__":
     processed_folder = Path("data/processed")
 
     documents = load_all_pdfs(pdf_folder)
-    saved_files = save_documents_to_processed(documents, processed_folder)
+    processed_files = save_documents_to_processed(documents, processed_folder)
 
     for doc in documents:
         save_text(doc, processed_folder)
@@ -106,4 +141,4 @@ if __name__ == "__main__":
     print(documents[0]["text"][:1000])
 
     print(f"\nLoaded {len(documents)} documents")
-    print(f"Saved {len(saved_files)} processed files")
+    print(f"Saved {len(processed_files)} processed files")
