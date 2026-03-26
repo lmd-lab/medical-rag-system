@@ -4,9 +4,35 @@ import json
 import pymupdf
 import re
 
+# TODO: pagewise extraction, e.g.
+# for page_number, page in enumerate(pdf_doc, start=1):
+#    text = page.get_text()
+# save to "pages": [...]
 # TODO: add per-file error handling and logging for PDF ingestion
 # TODO: add OCR extraction for PDFs with low text quality - metadata may be false too
 # TODO: table handling
+# TODO: Enhance meta-data handling: PDF -> extract DOI -> lookup metadata -> merge
+
+DOI_REGEX = re.compile(
+    r'(?:https?://(?:dx\.)?doi\.org/|doi:\s*)?(10\.\d{4,9}/[-._;()/:A-Z0-9]+)',
+    re.IGNORECASE,
+)
+
+def extract_doi(text: str, metadata: dict[str, Any] | None = None) -> str | None:
+    # 1) Try metadata first
+    if metadata:
+        for value in metadata.values():
+            if isinstance(value, str):
+                match = DOI_REGEX.search(value)
+                if match:
+                    return match.group(1)
+
+    # 2) Try full text
+    match = DOI_REGEX.search(text)
+    if match:
+        return match.group(1)
+
+    return None
 
 def normalize_text(text: str) -> str:
     # Normalize line endings
@@ -73,6 +99,7 @@ def extract_text_from_pdf(pdf_path: Path) -> dict[str, Any]:
 
     cleaned_text = normalize_text(raw_text)
     quality = classify_text_quality(cleaned_text)
+    doi = extract_doi(cleaned_text, metadata)
 
     if quality in {"empty", "artifact"}:
         cleaned_text = extract_text_with_ocr()
@@ -84,6 +111,7 @@ def extract_text_from_pdf(pdf_path: Path) -> dict[str, Any]:
         "filename": pdf_path.name,
         "path": str(pdf_path),
         "text": cleaned_text,
+        "doi": doi,
         "metadata": metadata,
         "quality": quality,
         "processing_method": processing_method,
