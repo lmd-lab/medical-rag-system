@@ -79,17 +79,15 @@ def classify_text_quality(text: str) -> str:
     if not text.strip():
         return "empty"
 
-    if "Firefox" in text and "http" in text:
-        return "artifact"
-
     words = text.split()
 
-    if len(set(words)) < 30:
+    unique_ratio = len(set(words)) / len(words)
+    if unique_ratio < 0.3:
         return "artifact"
 
     return "good"
 
-def extract_text_with_ocr() -> str:
+def extract_text_with_ocr(pdf_path: Path) -> str:
     return "OCR placeholder"
 
 def extract_text_from_pdf(pdf_path: Path) -> dict[str, Any]:
