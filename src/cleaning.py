@@ -1,5 +1,8 @@
 import re
 
+# TODO: Refactor into a single regex pass; fix edge case where intentional
+# dashes are merged (could be solved with a dictionary check).
+
 def normalize_text(text: str) -> str:
     # Normalize line endings
     text = text.replace("\r\n", "\n").replace("\r", "\n")
