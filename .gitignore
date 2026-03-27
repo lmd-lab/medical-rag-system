@@ -71,3 +71,6 @@ repo.txt
 faiss_index/
 chroma/
 cache/
+
+# patterns for chunking
+src/patterns.py

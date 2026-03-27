@@ -6,6 +6,7 @@ import re
 
 from cleaning import normalize_text
 from chunking import add_chunks_to_document
+from patterns import DOI_REGEX
 
 # TODO: pagewise extraction, e.g.
 # for page_number, page in enumerate(pdf_doc, start=1):
@@ -15,11 +16,6 @@ from chunking import add_chunks_to_document
 # TODO: add OCR extraction for PDFs with low text quality - metadata may be false too
 # TODO: table handling
 # TODO: Enhance meta-data handling: PDF -> extract DOI -> lookup metadata -> merge
-
-DOI_REGEX = re.compile(
-    r'(?:https?://(?:dx\.)?doi\.org/|doi:\s*)?(10\.\d{4,9}/[-._;()/:A-Z0-9]+)',
-    re.IGNORECASE,
-)
 
 def extract_doi(text: str, metadata: dict[str, Any] | None = None) -> str | None:
     # 1) Try metadata first

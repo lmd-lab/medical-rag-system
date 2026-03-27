@@ -1,14 +1,10 @@
 from typing import Any
 import re
 
-# TODO: handle scientific PDF artifacts (headers, footers, tables) before semantic chunking
-
-UNWANTED_PATTERNS = [
-    "Downloaded from",
-    "by guest on",
-    "©",
-    re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
-]
+try:
+    from patterns import UNWANTED_PATTERNS
+except ImportError:
+    UNWANTED_PATTERNS = []
 
 def merge_broken_lines(text: str) -> str:
     lines = text.split("\n")
@@ -37,9 +33,24 @@ def merge_broken_lines(text: str) -> str:
 
     return "\n".join(merged)
 
-def split_into_chunks(text: str) -> list[str]:
+def split_into_chunks(text: str, max_words: int = 120) -> list[str]:
     text = merge_broken_lines(text)
-    chunks = [chunk.strip() for chunk in text.split("\n\n") if chunk.strip()]
+
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+
+    chunks = []
+    current_chunk = []
+
+    for sentence in sentences:
+        current_chunk.append(sentence)
+
+        if len(" ".join(current_chunk).split()) >= max_words:
+            chunks.append(" ".join(current_chunk))
+            current_chunk = []
+
+    if current_chunk:
+        chunks.append(" ".join(current_chunk))
+
     return chunks
 
 
