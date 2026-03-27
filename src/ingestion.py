@@ -37,17 +37,20 @@ def extract_doi(text: str, metadata: dict[str, Any] | None = None) -> str | None
 
     return None
 
-def classify_text_quality(text: str) -> str:
+def classify_text_quality(text: str) -> tuple[str, str]:
     if not text.strip():
-        return "empty"
+        return "empty", "text is empty or whitespace only"
 
     words = text.split()
 
-    unique_ratio = len(set(words)) / len(words)
-    if unique_ratio < 0.3:
-        return "artifact"
+    if len(words) <= 2:
+        return "artifact", "too few words"
 
-    return "good"
+    unique_ratio = len(set(words)) / len(words)
+    if unique_ratio < 0.2:
+        return "artifact", "too few unique words"
+
+    return "good", "enough unique words and no obvious artifact pattern"
 
 def extract_text_with_ocr() -> str:
     return "OCR placeholder"
@@ -58,11 +61,11 @@ def extract_text_from_pdf(pdf_path: Path) -> dict[str, Any]:
         metadata = pdf_doc.metadata
 
     cleaned_text = normalize_text(raw_text)
-    quality = classify_text_quality(cleaned_text)
+    quality, quality_reason  = classify_text_quality(cleaned_text)
     doi = extract_doi(cleaned_text, metadata)
 
     if quality in {"empty", "artifact"}:
-        cleaned_text = extract_text_with_ocr()
+        #cleaned_text = extract_text_with_ocr()
         processing_method = "ocr"
     else:
         processing_method = "text"
@@ -74,6 +77,7 @@ def extract_text_from_pdf(pdf_path: Path) -> dict[str, Any]:
         "doi": doi,
         "metadata": metadata,
         "quality": quality,
+        "quality_reason": quality_reason,
         "processing_method": processing_method,
     }
 
@@ -130,10 +134,16 @@ if __name__ == "__main__":
         quality = doc.get("quality")
 
     quality_counts = {"good": 0, "empty": 0, "artifact": 0}
+
     for doc in documents:
         quality = doc.get("quality")
         if quality in quality_counts:
             quality_counts[quality] += 1
+
+        if quality in {"empty", "artifact"}:
+            print(
+                f"{doc.get('filename')}: quality={quality} | reason={doc.get('quality_reason')}"
+            )
 
     print(f"\nLoaded {len(documents)} documents")
     print(f"Saved {len(processed_files)} processed files")
