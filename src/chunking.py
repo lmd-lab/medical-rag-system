@@ -6,6 +6,35 @@ try:
 except ImportError:
     UNWANTED_PATTERNS = []
 
+def remove_back_matter(text: str) -> str:
+    # terms that are not relevant for the main text
+    stop_signals = {
+        "references",
+        "acknowledgments",
+        "acknowledgements",
+        "financial disclosure",
+        "conflict of interest",
+        "supplementary material",
+        "supplementary figure",
+        "disclosure",
+        "study funding"
+    }
+
+    lines = text.split("\n")
+    clean_lines = []
+
+    for line in lines:
+        stripped_line = line.strip().lower()
+        # check if the line is exactly one of the stop signals
+        if any(stripped_line.startswith(signal) for signal in stop_signals):
+            # if the line is a heading in the middle of the text, stop processing
+            if len(stripped_line.split()) <= 4:
+                break
+
+        clean_lines.append(line)
+
+    return "\n".join(clean_lines)
+
 def clean_text(text: str) -> str:
     for pattern in UNWANTED_PATTERNS:
         if isinstance(pattern, re.Pattern):
@@ -27,8 +56,7 @@ def is_heading(line: str) -> bool:
     # common short section labels
     if line.lower() in {
         "abstract", "introduction", "methods", "results", "discussion",
-        "conclusion", "conclusions", "references", "acknowledgments",
-        "acknowledgements", "appendix", "case report"
+        "conclusion", "conclusions", "case report", "appendix"
     }:
         return True
 
@@ -130,10 +158,11 @@ def split_into_chunks(text: str, max_words: int = 150) -> list[str]:
     flush_chunk()
     return chunks
 
-
 def add_chunks_to_document(document: dict[str, Any]) -> dict[str, Any]:
+    # remove back matter
+    text_without_refs = remove_back_matter(document["text"])
     # clean and structure the text
-    refined_text = merge_broken_lines(document["text"])
+    refined_text = merge_broken_lines(text_without_refs)
     # build chunk based on this structure
     document["chunks"] = split_into_chunks(refined_text)
     return document
