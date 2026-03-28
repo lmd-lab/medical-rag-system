@@ -74,3 +74,4 @@ cache/
 
 # patterns for chunking
 src/patterns.py
+repo.txt
