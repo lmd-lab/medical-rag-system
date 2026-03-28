@@ -9,11 +9,11 @@ except ImportError:
 def remove_back_matter(text: str) -> str:
     # terms that are not relevant for the main text
     stop_signals = {
-        "references",
         "acknowledgments",
         "acknowledgements",
         "financial disclosure",
         "conflict of interest",
+        "conflicts of interest",
         "supplementary material",
         "supplementary figure",
         "disclosure",
@@ -95,7 +95,7 @@ def merge_broken_lines(text: str) -> str:
             continue
 
         # if the line is a heading, do not merge it with the previous line
-        if is_heading(line) or (merged and is_heading(merged[-1])):
+        if is_heading(line): #or (merged and is_heading(merged[-1])):
             merged.append(line)
             continue
 
