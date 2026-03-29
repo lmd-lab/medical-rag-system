@@ -1,39 +1,40 @@
 from pathlib import Path
 from typing import Any
-import json
-import pymupdf
 import re
+import json
+import html
+from collections import Counter
+from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.pipeline_options import PdfPipelineOptions
 
-from cleaning import normalize_text
-from chunking import add_chunks_to_document
-from patterns import DOI_REGEX
+from config import RAW_DATA_PATH, PROCESSED_DATA_PATH
+from src.chunking import add_chunks_to_document
+from src.crossref_citations import get_citation_from_crossref, clean_filename_reference
+from src.patterns import DOI_REGEX, PMID_REGEX, SECTION_HEADERS
+try:
+    from src.patterns import UNWANTED_PATTERNS
+except ImportError:
+    UNWANTED_PATTERNS = []
 
-# TODO: pagewise extraction, e.g.
-# for page_number, page in enumerate(pdf_doc, start=1):
-#    text = page.get_text()
-# save to "pages": [...]
-# TODO: add per-file error handling and logging for PDF ingestion
-# TODO: add OCR extraction for PDFs with low text quality - metadata may be false too
-# TODO: table handling
-# TODO: Enhance meta-data handling: PDF -> extract DOI -> lookup metadata -> merge
+def extract_doi(text: str) -> str | None:
+    first_part = text[:6000] # only the first 1-2 pages
 
-def extract_doi(text: str, metadata: dict[str, Any] | None = None) -> str | None:
-    # 1) Try metadata first
-    if metadata:
-        for value in metadata.values():
-            if isinstance(value, str):
-                match = DOI_REGEX.search(value)
-                if match:
-                    return match.group(1)
-
-    # 2) Try full text
-    match = DOI_REGEX.search(text)
+    match = DOI_REGEX.search(first_part)
     if match:
-        return match.group(1)
+        return match.group(1).rstrip(".")
 
     return None
 
-def classify_text_quality(text: str) -> tuple[str, str]:
+def extract_pmid(text: str) -> str | None:
+    first_part = text[:6000]
+
+    match = PMID_REGEX.search(first_part)
+    if match:
+        return match.group(1)
+    return None
+
+def classify_basic_text_quality(text: str) -> tuple[str, str]:
     if not text.strip():
         return "empty", "text is empty or whitespace only"
 
@@ -48,46 +49,195 @@ def classify_text_quality(text: str) -> tuple[str, str]:
 
     return "good", "enough unique words and no obvious artifact pattern"
 
-def extract_text_with_ocr() -> str:
-    return "OCR placeholder"
+def get_first_heading(md_text: str):
+    for line in md_text.splitlines():
+        if line.startswith("#"):
+            return line.replace("#", "").strip()
+    return None
 
-def extract_text_from_pdf(pdf_path: Path) -> dict[str, Any]:
-    with pymupdf.open(pdf_path) as pdf_doc:
-        raw_text = "".join(page.get_text() for page in pdf_doc)
-        metadata = pdf_doc.metadata
+def fix_spaced_caps(text: str) -> str:
+    return re.sub(
+        r"\b(?:[A-Z]\s){3,}[A-Z](?=\b|:)",
+        lambda m: m.group(0).replace(" ", ""),
+        text
+    )
 
-    cleaned_text = normalize_text(raw_text)
-    quality, quality_reason  = classify_text_quality(cleaned_text)
-    doi = extract_doi(cleaned_text, metadata)
+def add_markdown_headers(text: str) -> str:
+    for header in SECTION_HEADERS:
+        text = re.sub(
+            rf"(?im)^\s*{header}\s*$",
+            f"\n# {header}\n",
+            text,
+        )
+    return text
 
-    if quality in {"empty", "artifact"}:
-        #cleaned_text = extract_text_with_ocr()
-        processing_method = "ocr"
-    else:
-        processing_method = "text"
+def clean_markdown_text(text: str) -> str:
+    text = html.unescape(text) # remove HTML entities
 
-    return {
-        "filename": pdf_path.name,
-        "path": str(pdf_path),
-        "text": cleaned_text,
-        "doi": doi,
-        "metadata": metadata,
-        "quality": quality,
-        "quality_reason": quality_reason,
-        "processing_method": processing_method,
-    }
+    text = text.replace("-\n", "") # remove line breaks after dashes
+    #text = text.replace("\n\n\n", "\n\n") # remove multiple line breaks
+    text = re.sub(r" {2,}", " ", text) # remove multiple spaces
+    text = text.replace("â€™", "'") # remove weird character
+    text = text.replace("ﬁ", "fi").replace("ﬂ", "fl")
+
+    text = fix_spaced_caps(text)
+
+    for pattern in UNWANTED_PATTERNS:
+        if isinstance(pattern, re.Pattern):
+            text = pattern.sub("", text)
+        else:
+            text = re.sub(re.escape(pattern), "", text, flags=re.IGNORECASE)
+
+    text = add_markdown_headers(text)
+
+    return text.strip()
+
+def remove_journal_from_text(text: str, reference: dict) -> str:
+    journal = reference.get("journal")
+
+    if journal:
+        text = re.sub(
+            re.escape(journal),
+            "",
+            text,
+            flags=re.IGNORECASE
+        )
+
+    publisher = reference.get("publisher")
+
+    if publisher:
+        text = re.sub(
+            re.escape(publisher),
+            "",
+            text,
+            flags=re.IGNORECASE
+        )
+
+    return text
+
+def validate_reference_match(reference: dict, text: str) -> bool:
+    if not isinstance(reference, dict) or not reference.get("title"):
+        return False
+
+    # clean text and title of everything but letters and numbers
+    def normalize(s: str) -> str:
+        return re.sub(r"\W", "", s).lower()
+
+    full_text_norm = normalize(text)
+
+    # check if the normalized title is in the normalized text
+    short_title = " ".join(reference["title"].split()[:6])
+    short_title_norm = normalize(short_title)
+
+    if short_title_norm in full_text_norm:
+        return True
+
+    # if the title is not found, check for significant words (longer than 5 characters)
+    title_words = [
+        normalize(w)
+        for w in reference["title"].split()
+        if len(normalize(w)) > 5
+    ]
+    if not title_words:
+        return False
+
+    matches = sum(
+        1 for w in title_words
+        if w in full_text_norm
+    )
+
+    # If 60% of the long words appear, it's likely a match'
+    return (matches / len(title_words)) >= 0.6
+
+def extract_text(pdf_path: Path) -> dict[str, Any]:
+    # ignore pictures but use ocr for bad PDFs
+    pipeline_options = PdfPipelineOptions()
+    pipeline_options.do_ocr = True
+    pipeline_options.generate_page_images = False
+    pipeline_options.generate_table_images = False  # no pictures of tables?
+
+    converter = DocumentConverter(
+        format_options={
+            InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+        }
+    )
+
+    try:
+        result = converter.convert(str(pdf_path))
+
+        # Markdown without images
+        markdown_text = result.document.export_to_markdown()
+
+        # Metadata extraction
+        metadata = vars(result.document.origin) if result.document.origin else {}
+
+        # check quality and get doi
+        quality, quality_reason = classify_basic_text_quality(markdown_text)
+
+        # get doi and pmid
+        doi = extract_doi(markdown_text)
+        pmid = extract_pmid(markdown_text)
+
+        # clean Markdown from artifacts
+        cleaned_markdown = clean_markdown_text(markdown_text)
+
+        # get first heading
+        first_heading = get_first_heading(cleaned_markdown)
+
+        # build reference for chunking
+        reference = get_citation_from_crossref(
+            doi=doi,
+            filename=pdf_path.name,
+            query_title=first_heading,
+        )
+
+        # validate the reference match
+        reference_valid = validate_reference_match(
+            reference,
+            cleaned_markdown,
+        )
+        if not reference_valid:
+            reference = {
+                "reference": clean_filename_reference(pdf_path.name),
+                "journal": None,
+                "publisher": None,
+                "doi": doi,
+            }
+
+        # remove journal if present in reference from text to reduce noise
+        cleaned_markdown = remove_journal_from_text(cleaned_markdown, reference)
+
+        return {
+            "filename": pdf_path.name,
+            "path": str(pdf_path),
+            "first_heading": first_heading,
+            "title": reference.get("title"),
+            "reference": reference.get("reference"),
+            "journal": reference.get("journal"),
+            "publisher": reference.get("publisher"),
+            "doi": doi,
+            "pmid": pmid,
+            "quality": quality,
+            "quality_reason": quality_reason,
+            "processing_method": "docling_v2_optimized",
+            "metadata": metadata,
+            "text": cleaned_markdown.strip(),
+        }
+    except Exception as e:
+        print(f"Error processing {pdf_path}: {e}")
+        return {"filename": pdf_path.name, "error": str(e)}
 
 def load_all_pdfs(folder_path: Path) -> list[dict[str, Any]]:
-    pdf_documents: list[dict[str, Any]] = []
+    documents: list[dict[str, Any]] = []
 
     for pdf_file in folder_path.glob("*.pdf"):
         try:
             print(f"Processing: {pdf_file.name}")
-            pdf_documents.append(extract_text_from_pdf(pdf_file))
+            documents.append(extract_text(pdf_file))
         except Exception as e:
             print(f"Failed: {pdf_file.name} -> {e}")
 
-    return pdf_documents
+    return documents
 
 def save_documents_to_processed(
     documents: list[dict[str, Any]],
@@ -107,7 +257,7 @@ def save_documents_to_processed(
 
     return saved_files
 
-def save_text(document: dict[str, Any], output_folder: Path) -> None:
+def save_markdown(document: dict[str, Any], output_folder: Path) -> None:
     output_folder.mkdir(parents=True, exist_ok=True)
 
     output_file = output_folder / f"{Path(document['filename']).stem}.txt"
@@ -116,32 +266,66 @@ def save_text(document: dict[str, Any], output_folder: Path) -> None:
         f.write(document["text"])
 
 if __name__ == "__main__":
-    pdf_folder = Path("data/raw")
-    processed_folder = Path("data/processed")
-
-    documents = load_all_pdfs(pdf_folder)
-    documents = [add_chunks_to_document(doc) for doc in documents]
-    processed_files = save_documents_to_processed(documents, processed_folder)
+    # Procsessing
+    documents = load_all_pdfs(RAW_DATA_PATH)
+    documents = [add_chunks_to_document(doc) for doc in documents if "text" in doc]
+    processed_files = save_documents_to_processed(documents, PROCESSED_DATA_PATH)
 
     for doc in documents:
-        save_text(doc, processed_folder)
+        save_markdown(doc, PROCESSED_DATA_PATH)
 
-    for doc in documents:
-        quality = doc.get("quality")
-
+    # Stats & Validation Setup
     quality_counts = {"good": 0, "empty": 0, "artifact": 0}
 
+    # Lists for reference validation
+    valid_refs = []
+    suspicious_refs = []
+    fallback_refs = []
+
+    print("\n--- Processing Details ---")
     for doc in documents:
-        quality = doc.get("quality")
-        if quality in quality_counts:
-            quality_counts[quality] += 1
+        # A. Quality Check
+        q = doc.get("quality")
+        if q in quality_counts:
+            quality_counts[q] += 1
 
-        if quality in {"empty", "artifact"}:
-            print(
-                f"{doc.get('filename')}: quality={quality} | reason={doc.get('quality_reason')}"
-            )
+        if q in {"empty", "artifact"}:
+            print(f"QUALITY ALERT: {doc['filename']} -> {doc.get('quality_reason')}")
 
-    print(f"\nLoaded {len(documents)} documents")
-    print(f"Saved {len(processed_files)} processed files")
+        title = doc.get("title")
+
+        if not title:
+            fallback_refs.append(doc["filename"])
+        else:
+            is_valid = validate_reference_match({"title": title}, doc.get("text", ""))
+            if is_valid:
+                valid_refs.append(doc["filename"])
+            else:
+                suspicious_refs.append(f"{doc['filename']} (Ref: {doc.get('reference')})")
+
+    # Final summary output
+    print("\n" + "=" * 30)
+    print(f"TOTAL DOCUMENTS: {len(documents)}")
+    print(f"SAVED FILES:     {len(processed_files)}")
+    print("-" * 30)
     print(
-        f"Quality summary: good={quality_counts['good']}, empty={quality_counts['empty']}, artifact={quality_counts['artifact']}")
+        f"QUALITY:    Good: {quality_counts['good']} | Empty/Artifact: {quality_counts['empty'] + quality_counts['artifact']}")
+    print(f"REFERENCES: Valid: {len(valid_refs)} | Suspicious: {len(suspicious_refs)} | Fallback: {len(fallback_refs)}")
+    print("=" * 30)
+
+    if suspicious_refs:
+        print("\nSUSPICIOUS REFERENCES (Check these manually):")
+        for item in suspicious_refs:
+            print(f"  [!] {item}")
+
+    if fallback_refs:
+        print("\nFALLBACKS (No Crossref title found):")
+        for item in fallback_refs:
+            print(f"  [?] {item}")
+
+    # Journal stats
+    journals = [doc.get("journal") for doc in documents if doc.get("journal")]
+    if journals:
+        print("\nTOP JOURNALS:")
+        for journal, count in Counter(journals).most_common(5):
+            print(f"  {count}x {journal}")
