@@ -84,10 +84,10 @@ This project uses **Conda** to manage the Python environment and its dependencie
 Ensure you have [Conda](https://docs.conda.io/en/latest/miniconda.html) or [Mamba](https://mamba.readthedocs.io/) installed on your system.
 
 ### 2. Create the Environment
-The environment is defined in the `environment.yml` file. To create it, run:
+The environment is defined in the `environment.yaml` file. To create it, run:
 
 ```bash
-conda env create -f environment.yml
+conda env create -f environment.yaml
 ```
 
 ### 3. Activate the Environment
