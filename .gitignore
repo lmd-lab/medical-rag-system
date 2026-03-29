@@ -19,6 +19,7 @@ venv/
 *.env
 
 # notebooks
+notebooks/
 *.ipynb
 .ipynb_checkpoints/
 
@@ -74,4 +75,3 @@ cache/
 
 # patterns for chunking
 src/patterns.py
-repo.txt
