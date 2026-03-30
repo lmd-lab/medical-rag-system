@@ -1,5 +1,6 @@
 import requests
-
+import re
+import html
 
 def clean_filename_reference(filename: str) -> str:
     return (
@@ -20,13 +21,21 @@ def build_reference(item: dict):
         initials = f"{given[0]}." if given else ""
         first_author = f"{family}, {initials}"
 
+        if len(authors) > 1:
+            first_author += " et al."
+
+    if not authors or not authors[0].get("family"):
+        return None
+
     year = (
         item.get("published-print", {}).get("date-parts", [[None]])[0][0]
         or item.get("published-online", {}).get("date-parts", [[None]])[0][0]
         or item.get("created", {}).get("date-parts", [[None]])[0][0]
     )
 
-    title = item.get("title", [""])[0]
+    title = html.unescape(item.get("title", [""])[0])
+    title = re.sub(r"<[^>]+>", "", title)
+    title = re.sub(r"\s+", " ", title).strip()
 
     journal = item.get("container-title", [""])
     journal = journal[0] if journal else ""
@@ -54,32 +63,30 @@ def build_reference(item: dict):
     return {
         "reference": reference,
         "title": title,
+        "year": year,
         "journal": journal,
         "publisher": publisher,
         "doi": doi,
     }
 
-
 def query_crossref_by_text(query: str, base_url: str):
     try:
-        params = {
-            "query.bibliographic": query,
-            "rows": 1
-        }
-
+        params = {"query.bibliographic": query, "rows": 1}
         r = requests.get(f"{base_url}/works", params=params, timeout=5)
 
         if r.status_code == 200:
-            items = r.json()["message"]["items"]
+            data = r.json()["message"]
+            items = data.get("items", [])
 
             if items:
-                return build_reference(items[0])
+                best_match = items[0]
+                if best_match.get("score", 0) < 25:
+                    return None
 
+                return build_reference(best_match)
     except Exception as e:
         print(f"Crossref query error for '{query}': {e}")
-
     return None
-
 
 def get_citation_from_crossref(
     doi: str = None,
