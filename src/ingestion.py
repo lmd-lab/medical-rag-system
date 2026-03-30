@@ -75,8 +75,9 @@ def clean_markdown_text(text: str) -> str:
     text = html.unescape(text) # remove HTML entities
 
     text = text.replace("-\n", "") # remove line breaks after dashes
-    #text = text.replace("\n\n\n", "\n\n") # remove multiple line breaks
+    text = text.replace("\n\n\n", "\n\n") # remove multiple line breaks
     text = re.sub(r" {2,}", " ", text) # remove multiple spaces
+    text = text.replace("\xa0", " ") # NBSP = Non-Breaking Space
     text = text.replace("â€™", "'") # remove weird character
     text = text.replace("ﬁ", "fi").replace("ﬂ", "fl")
 
@@ -212,6 +213,7 @@ def extract_text(pdf_path: Path) -> dict[str, Any]:
             "path": str(pdf_path),
             "first_heading": first_heading,
             "title": reference.get("title"),
+            "year": reference.get("year"),
             "reference": reference.get("reference"),
             "journal": reference.get("journal"),
             "publisher": reference.get("publisher"),
