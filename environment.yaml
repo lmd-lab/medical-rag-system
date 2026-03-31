@@ -3,13 +3,17 @@ channels:
   - conda-forge
 dependencies:
   - python=3.11
-  - pymupdf
   - pip
   - cxx-compiler
   - cmake
   - setuptools
-  - numpy=1.26.4  # 1.26.4 is the version that works with docling
-  - requests
   - pip:
-      - streamlit
+      - numpy>=2.0.0
+      - torch>=2.4.1
+      - torchvision>=0.19.1
       - docling
+      - streamlit
+      - sentence-transformers
+      - requests
+      - pymupdf
+      - pandas
