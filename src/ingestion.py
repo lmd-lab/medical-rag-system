@@ -233,6 +233,15 @@ def load_all_pdfs(folder_path: Path) -> list[dict[str, Any]]:
     documents: list[dict[str, Any]] = []
 
     for pdf_file in folder_path.glob("*.pdf"):
+        # generate expected json file name
+        expected_json_name = f"{pdf_file.stem}.json"
+        expected_json_path = PROCESSED_DATA_PATH / expected_json_name
+
+        # check if file is already processed
+        if expected_json_path.exists():
+            print(f"Skipping: {pdf_file.name} (already processed)")
+            continue
+
         try:
             print(f"Processing: {pdf_file.name}")
             documents.append(extract_text(pdf_file))
