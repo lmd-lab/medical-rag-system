@@ -17,3 +17,5 @@ dependencies:
       - requests
       - pymupdf
       - pandas
+      - ipywidgets 
+      - hf_transfer
