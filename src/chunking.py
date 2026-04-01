@@ -1,6 +1,8 @@
 import re
 from typing import Any
 
+from config import MIN_CHUNK_WORDS
+
 
 def normalize_text(text: str) -> str:
     # Handle multi-character replacements first
@@ -42,6 +44,10 @@ def split_into_chunks_markdown(
 
     def append_chunk(chunks: list[dict[str, Any]], chunk_text: str, metadata: dict[str, Any]) -> None:
         normalized_text = re.sub(r"\s+", " ", chunk_text).strip()
+        # Ensure the chunk has a minimum number of words and letters to be meaningful
+        word_count = len(normalized_text.split())
+        if word_count < MIN_CHUNK_WORDS:
+            return
         if len(re.findall(r"[A-Za-z]", normalized_text)) >= min_letter_count:
             chunks.append({"text": normalized_text, "metadata": metadata})
 
