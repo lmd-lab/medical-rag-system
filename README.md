@@ -104,7 +104,7 @@ If the environment.yml is updated, you can synchronize your local environment by
 Bash
 
 ```bash
-conda env update -f environment.yml --prune
+conda env update -f environment.yaml --prune
 ```
 
 ## Notes
