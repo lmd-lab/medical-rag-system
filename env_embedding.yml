@@ -1,4 +1,4 @@
-name: rag-project
+name: rag-embedding
 channels:
   - conda-forge
 dependencies:
@@ -9,9 +9,9 @@ dependencies:
   - setuptools
   - pip:
       - python-dotenv
-      - numpy<2.0.0 #>=2.0.0
-      - torch==2.2.2 #>=2.4.1
-      - torchvision==0.17.2 #>=0.19.1
+      - numpy>=2.0.0
+      - torch>=2.4.1
+      - torchvision>=0.19.1
       - docling
       - streamlit
       - sentence-transformers
