@@ -75,3 +75,6 @@ cache/
 
 # patterns for chunking
 src/patterns.py
+
+# Logs
+Logs/*
