@@ -1,18 +1,24 @@
-# Medical RAG System
+# Medical RAG Prototype
 
-A minimal retrieval-augmented generation (RAG) system for querying local PDF documents.
+A minimal local retrieval-augmented generation (RAG) prototype for processing and querying medical documents.
 
-## Goal
+## Project Goal
 
-Build a simple local pipeline that:
+The goal of this project is to build a simple but functional prototype that transforms unstructured medical PDF documents into semantically searchable text chunks.
 
-- extracts text from PDF files
-- splits text into chunks
-- creates embeddings
-- stores embeddings in a vector database
-- retrieves relevant context for user queries
-- generates answers with source references
+The current implementation focuses on scientific PDF documents as a technical development basis, while the long-term target is the processing of clinical documents such as physician letters.
 
+The project intentionally follows an MVP approach:
+
+- stable end-to-end processing
+- pragmatic heuristics
+- iterative improvement over full complexity
+
+The primary goal is to establish a reliable pipeline before expanding complexity.
+
+## Core Pipeline
+
+PDF → Extraction → Cleaning → Chunking → Embeddings → Vector Store → Retrieval → Answer Generation
 
 ## Project Structure
 ```text
@@ -24,12 +30,14 @@ Build a simple local pipeline that:
 │   └── vectorstore/         # Stored embeddings / FAISS index
 │
 ├── src/
-│   ├── ingestion.py         # PDF → Text
-│   ├── chunking.py          # Text → Chunks
-│   ├── embedding.py         # Generate embeddings
-│   ├── vectorstore.py       # FAISS / Chroma handling
-│   ├── rag.py               # Retrieval + prompting
-│   └── utils.py             # Small utility functions
+│   ├── ingestion.py            # PDF → Text
+|   ├── cleaning.py             # Text cleaning
+|   ├── crossref_citations.py   # Metadata enrichment
+│   ├── chunking.py             # Text → Chunks
+│   ├── embedding.py            # Generate embeddings
+│   ├── vectorstore.py          # FAISS / Chroma handling
+│   ├── rag.py                  # Retrieval + prompting
+│   └── utils.py                # Utility functions
 │
 ├── app/
 │   └── streamlit_app.py     # UI
@@ -43,38 +51,15 @@ Build a simple local pipeline that:
 
 ```
 
-## Goal
-
-Build a simple local pipeline that:
-
-- extracts text from PDF files
-- splits text into chunks
-- creates embeddings
-- stores embeddings in a vector database
-- retrieves relevant context for user queries
-- generates answers with source references
-
 ## MVP Scope
 
-Current MVP includes:
+Current MVP intentionally includes only:
 
-local PDF files only
-no OCR
-no database
-no automatic updates
-simple Streamlit interface
-
-## Planned Pipeline
-
-PDFs → Text Extraction → Chunking → Embeddings → Vector Store → Retrieval → Answer Generation
-
-First Steps
- Implement PDF loading
- Extract text
- Chunk text
- Create embeddings
- Test retrieval
- Build simple UI
+- local PDF files
+- no OCR
+- local vector storage
+- no automated updates
+- lightweight Streamlit interface
 
 ## Installation & Setup
 
@@ -84,10 +69,10 @@ This project uses **Conda** to manage the Python environment and its dependencie
 Ensure you have [Conda](https://docs.conda.io/en/latest/miniconda.html) or [Mamba](https://mamba.readthedocs.io/) installed on your system.
 
 ### 2. Create the Environment
-The environment is defined in the `environment.yaml` file. To create it, run:
+The environment is defined in the `environment.yml` file. To create it, run:
 
 ```bash
-conda env create -f environment.yaml
+conda env create -f environment.yml
 ```
 
 ### 3. Activate the Environment
@@ -104,10 +89,34 @@ If the environment.yml is updated, you can synchronize your local environment by
 Bash
 
 ```bash
-conda env update -f environment.yaml --prune
+conda env update -f environment.yml --prune
 ```
 
-## Notes
+
+### Current environment note
+
+Separate environments currently exist because extraction and embedding require different package constraints:
+
+- env_ingestion.yml
+- env_embedding.yml
+
+## Development Philosophy
 
 This project is intentionally developed iteratively.
-The first goal is a working prototype, not a perfect architecture.
+
+Main principle:
+
+A working prototype is more valuable than an unfinished perfect architecture.
+
+Priorities:
+
+- stability before elegance
+- simple heuristics before complex document logic
+- selective refactoring only when necessary
+
+# Next Steps
+- stabilize extraction across multiple document types
+- validate chunk quality
+- improve metadata consistency
+- test retrieval quality
+- prepare transition toward clinical document use
