@@ -49,6 +49,8 @@ logs/
 json/
 
 # data folder but keep structure
+data/*
+
 data/raw/*
 !data/raw/.gitkeep
 
