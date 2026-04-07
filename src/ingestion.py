@@ -5,7 +5,6 @@ This module handles the ingestion of PDF documents
 import json
 import logging
 import os
-from collections import Counter
 from pathlib import Path
 from typing import Any
 from docling.datamodel.base_models import InputFormat
@@ -87,7 +86,7 @@ def extract_text(pdf_path: Path) -> dict[str, Any]:
     pipeline_options.do_ocr = True
     pipeline_options.generate_page_images = False
     pipeline_options.generate_table_images = False  # no pictures of tables?
-    pipeline_options.do_table_structure = True # skipt tables 
+    pipeline_options.do_table_structure = True # skips tables
     pipeline_options.table_structure_options.do_cell_matching = True
 
     converter = DocumentConverter(
@@ -101,9 +100,6 @@ def extract_text(pdf_path: Path) -> dict[str, Any]:
 
         # Markdown without images
         markdown_text = result.document.export_to_markdown()
-
-        # Metadata extraction
-        metadata = vars(result.document.origin) if result.document.origin else {}
 
         # check quality and get doi
         quality, quality_reason = classify_basic_text_quality(markdown_text)
@@ -157,7 +153,6 @@ def extract_text(pdf_path: Path) -> dict[str, Any]:
             "quality": quality,
             "quality_reason": quality_reason,
             "processing_method": "docling_v2_optimized",
-            "metadata": metadata,
             "text": cleaned_markdown.strip(),
         }
     except (FileNotFoundError, ValueError, IOError) as e:
