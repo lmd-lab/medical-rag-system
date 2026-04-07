@@ -5,7 +5,7 @@ Simplified PDF text cleaning pipeline:
 3. Metadata removal
 4. URL / email cleanup
 """
-import calendar
+
 import html
 import logging
 import os
@@ -14,12 +14,12 @@ import unicodedata
 from datetime import datetime
 
 import ftfy
-import spacy
 
-from src.patterns import (FUNCTION_WORDS, NOISE_WORDS,
-                          SECTION_HEADERS, UNWANTED_PREFIXES,
-                          EMAIL_REGEX, URL_REGEX,
-                          ALL_COUNTRIES, MEDICAL_TERMS)
+from src.patterns import (SECTION_HEADERS, UNWANTED_PREFIXES,
+                          EMAIL_REGEX, URL_REGEX, MEDICAL_TERMS,
+                          FUNCTION_WORDS)
+
+MEDICAL_TERMS_LOWER = {term.lower() for term in MEDICAL_TERMS}
 
 
 # ---------------- Logging ----------------
@@ -37,11 +37,6 @@ fh.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 
 if not logger.handlers:
     logger.addHandler(fh)
-
-
-# ---------------- spaCy ------------------------------------
-
-nlp = spacy.load("en_core_web_sm")
 
 
 # ---------------- Phase 1: Artifact cleaning ----------------
@@ -129,7 +124,84 @@ def clean_urls_and_emails(text: str) -> str:
 
     return text
 
-# ---------------- Phase 2: Content cleaning ----------------
+# ---------------- Phase 2: Author cleaning ----------------
+
+def is_author_block(text: str) -> bool:
+    lower_text = text.lower().strip()
+    words_in_line = re.findall(r"[a-z]+", lower_text)
+    
+    # 1. RETTUNG: Wenn Funktionswörter drin sind, ist es wertvoller Text
+    if any(word in FUNCTION_WORDS for word in words_in_line):
+        return False
+
+    # 2. RETTUNG: Wenn medizinische Fachbegriffe drin sind
+    if any(word in MEDICAL_TERMS_LOWER for word in words_in_line):
+        return False
+
+    # 3. ANALYSE: Nur wenn KEINE Rettung gegriffen hat, prüfen wir die Namen-Struktur
+    raw_words = text.split()
+    if len(raw_words) < 3: return False
+    
+    # Ratio der Wörter, die groß beginnen (Autorennamen)
+    capitals = sum(1 for w in raw_words if w[:1].isupper())
+    if capitals / len(raw_words) > 0.8:
+        return True # Ja, sieht nach einer reinen Namensliste aus
+
+    return False
+
+def clean_content(text: str) -> str:
+    lines = text.split("\n")
+    cleaned = []
+
+    for line in lines:
+        lower = line.lower().strip()
+        
+        # A. STRUKTUR-CHECK (Immer behalten)
+        if not lower or line.startswith(("#", "|", "*", "-")):
+            cleaned.append(line)
+            continue
+            
+        # B. METADATEN-CHECK (Präfix-Liste nutzen)
+        if any(lower.startswith(p) for p in UNWANTED_PREFIXES):
+            logger.debug("Removed Metadata: %s", line[:50])
+            continue
+            
+        # C. LÄNGEN-CHECK (Lange Texte sind fast immer Content)
+        if len(line) > 400:
+            cleaned.append(line)
+            continue
+
+        # D. AUTOREN-CHECK (Heuristik)
+        if is_author_block(line):
+            logger.debug("Removed Author Block: %s", line[:50])
+            continue
+            
+        cleaned.append(line)
+
+    return "\n".join(cleaned)
+
+# ---------------- Phase 3: Metadata ----------------
+
+def remove_metadata(text: str) -> str:
+    """Removes lines that start with common 
+    metadata prefixes like 'corresponding author' etc."""
+    lines = text.split("\n")
+    cleaned = []
+
+    for line in lines:
+        lower = line.lower().strip()
+
+        if re.fullmatch(r"\.+", lower):
+            logger.debug("Removed dot-only line: %s", line)
+            continue
+
+        if any(lower.startswith(prefix) for prefix in UNWANTED_PREFIXES):
+            logger.debug("Removed metadata line: %s", line)
+            continue
+
+        cleaned.append(line)
+
+    return "\n".join(cleaned)
 
 # ---------------- Main pipeline ----------------------------
 
@@ -146,11 +218,10 @@ def clean_markdown_text(text: str, filename: str = "unknown") -> str:
     text = clean_urls_and_emails(text)
 
     # Phase 2
-    #text = clean_content(text)
+    text = clean_content(text)
 
     # Phase 3
-    #text = remove_metadata(text)
-    
+    text = remove_metadata(text)
 
     logger.debug("Finished cleaning pipeline for %s", filename)
 
