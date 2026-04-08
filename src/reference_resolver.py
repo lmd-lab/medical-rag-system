@@ -7,9 +7,9 @@ import os
 import re
 import html
 import logging
-import requests
-
 from datetime import datetime
+
+import requests
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -21,7 +21,7 @@ CONTACT_EMAIL = os.getenv("CONTACT_EMAIL", "default@example.com")
 os.makedirs("Logs", exist_ok=True)
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-log_filename = f"Logs/reference_{timestamp}.log"
+log_filename: str = f"Logs/reference_{timestamp}.log"
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -216,7 +216,7 @@ def query_crossref_by_text(query: str, base_url: str) -> dict:
     try:
         headers = {"User-Agent": f"Medical RAG (mailto:{CONTACT_EMAIL})"}
         params = {"query.bibliographic": query, "rows": 1}
-        
+
         r = requests.get(
             f"{base_url}/works",
             headers=headers,
@@ -258,6 +258,7 @@ def get_reference(
         candidate = extract_nlm_info(text[:2000])
         validated = validate_candidate(candidate, text, "NLM", filename)
         if validated:
+            validated["source"] = "nlm"
             return validated
 
     # 2. DOI lookup
@@ -275,16 +276,18 @@ def get_reference(
                 candidate = build_reference(r.json()["message"])
                 validated = validate_candidate(candidate, text, "DOI", filename)
                 if validated:
+                    validated["source"] = "doi"
                     return validated
 
         except (requests.exceptions.RequestException, ValueError) as e:
-            logger.debug("DOI lookup error: %s", e)
+            logger.debug('File "%s" → DOI lookup error: %s', filename, e)
 
     # 3. Filename query
     if filename:
         candidate = query_crossref_by_text(clean_filename_reference(filename), base_url)
         validated = validate_candidate(candidate, text, "filename", filename)
         if validated:
+            validated["source"] = "filename"
             return validated
 
     # 4. Title query
@@ -292,6 +295,7 @@ def get_reference(
         candidate = query_crossref_by_text(query_title, base_url)
         validated = validate_candidate(candidate, text, "title", filename)
         if validated:
+            validated["source"] = "title"
             return validated
 
     # 5. Fallback
@@ -304,6 +308,7 @@ def get_reference(
         "publisher": None,
         "doi": doi,
         "type": "fallback",
+        "source": "fallback",
     }
 
     logger.debug(
@@ -311,5 +316,4 @@ def get_reference(
         filename,
         fallback["reference"]
     )
-
     return fallback
