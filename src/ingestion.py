@@ -16,6 +16,7 @@ from config import RAW_DATA_PATH, PROCESSED_DATA_PATH
 
 from src.patterns import DOI_REGEX, PMID_REGEX
 from src.cleaning import clean_markdown_text
+from src.reference_resolver import get_reference
 
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
@@ -108,48 +109,41 @@ def extract_text(pdf_path: Path) -> dict[str, Any]:
         doi = extract_doi(markdown_text)
         pmid = extract_pmid(markdown_text)
 
-        # clean Markdown from artifacts
-        cleaned_markdown = clean_markdown_text(markdown_text, filename=pdf_path.name)
-
         # get first heading
-        first_heading = get_first_heading(cleaned_markdown)
+        first_heading = get_first_heading(markdown_text)
 
         # build reference for chunking
-        #reference = get_citation_from_crossref(
-        #    doi=doi,
-        #    filename=pdf_path.name,
-        #    query_title=first_heading,
-        #)
+        reference = get_reference(
+            doi=doi,
+            filename=pdf_path.name,
+            query_title=first_heading,
+            text=markdown_text,
+        )
 
-        # validate the reference match
-        #reference_valid = validate_reference_match(
-        #    reference,
-        #    cleaned_markdown,
-        #)
-        #if not reference_valid:
-        #    reference = {
-        #        "reference": clean_filename_reference(pdf_path.name),
-        #        "journal": None,
-        #        "publisher": None,
-        #        "doi": doi,
-        #    }
-
+        # MOVE TO CLEANING: Remove journal name from text to reduce noise for chunking and embedding
         # remove journal if present in reference from text to reduce noise
         # cleaned_markdown = remove_journal_from_text(cleaned_markdown,
         #                                            reference,
-        #                                            filename=pdf_path.name)
+        #                                        filename=pdf_path.name)
+        # TO-DO: use the reference to also remove author names, affiliations, etc. from the text to reduce noise for chunking and embedding
+
+        # clean Markdown from artifacts
+        cleaned_markdown = clean_markdown_text(markdown_text, filename=pdf_path.name)
+
 
         return {
             "filename": pdf_path.name,
             "path": str(pdf_path),
             "first_heading": first_heading,
-            #"title": reference.get("title"),
-            #"year": reference.get("year"),
-            #"reference": reference.get("reference"),
-            #"journal": reference.get("journal"),
-            #"publisher": reference.get("publisher"),
+            "author": reference.get("author"),
+            "title": reference.get("title"),
+            "year": reference.get("year"),
+            "journal": reference.get("journal"),
+            "publisher": reference.get("publisher"),
+            "type": reference.get("type"),
             "doi": doi,
             "pmid": pmid,
+            "reference": reference.get("reference"),
             "quality": quality,
             "quality_reason": quality_reason,
             "processing_method": "docling_v2_optimized",
