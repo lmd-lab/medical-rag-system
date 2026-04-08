@@ -75,19 +75,25 @@ def remove_image_placeholders(text: str) -> str:
 def fix_spaced_caps(text: str) -> str:
     """Fixes A R T I C L E I N F O in headers with any number of # symbols."""
 
-    pattern = r"^(#+\s*)?((?:[a-zA-Z]\s+){2,}[a-zA-Z])(?=\s|$)"
+    lines = text.split("\n")
+    fixed_lines = []
 
-    matches = re.findall(pattern, text, re.MULTILINE)
-    if matches:
-        logger.debug("Found %d spaced caps: %s",
+    for line in lines:
+        if line.startswith("#"):
+            pattern = r"([a-zA-Z]\s){2,}[a-zA-Z]"
+            matches = re.findall(pattern, line)
+            if matches:
+                logger.debug("Found %d spaced caps: %s",
                      len(matches), [m[1] for m in matches[:3]])
+                parts = line.split(None, 1) 
+                if len(parts) > 1:
+                    prefix = parts[0] 
+                    content = parts[1].replace(" ", "")
+                    line = f"{prefix} {content}"
 
-    def remove_spaces(match):
-        prefix = match.group(1) or ""
-        content = re.sub(r"\s+", "", match.group(2))
-        return f"{prefix}{content}"
+        fixed_lines.append(line)
 
-    return re.sub(pattern, remove_spaces, text, flags=re.MULTILINE)
+    return "\n".join(fixed_lines)
 
 
 def add_markdown_headers(text: str) -> str:
@@ -127,25 +133,24 @@ def clean_urls_and_emails(text: str) -> str:
 # ---------------- Phase 2: Author cleaning ----------------
 
 def is_author_block(text: str) -> bool:
+    """Heuristic to identify lines that are likely author blocks,"""
     lower_text = text.lower().strip()
     words_in_line = re.findall(r"[a-z]+", lower_text)
     
-    # 1. RETTUNG: Wenn Funktionswörter drin sind, ist es wertvoller Text
     if any(word in FUNCTION_WORDS for word in words_in_line):
         return False
 
-    # 2. RETTUNG: Wenn medizinische Fachbegriffe drin sind
     if any(word in MEDICAL_TERMS_LOWER for word in words_in_line):
         return False
 
-    # 3. ANALYSE: Nur wenn KEINE Rettung gegriffen hat, prüfen wir die Namen-Struktur
     raw_words = text.split()
-    if len(raw_words) < 3: return False
-    
+    if len(raw_words) < 3: 
+        return False
+
     # Ratio der Wörter, die groß beginnen (Autorennamen)
     capitals = sum(1 for w in raw_words if w[:1].isupper())
     if capitals / len(raw_words) > 0.8:
-        return True # Ja, sieht nach einer reinen Namensliste aus
+        return True
 
     return False
 
@@ -155,27 +160,26 @@ def clean_content(text: str) -> str:
 
     for line in lines:
         lower = line.lower().strip()
-        
-        # A. STRUKTUR-CHECK (Immer behalten)
+
+        # always keep section headers, tables and lists
         if not lower or line.startswith(("#", "|", "*", "-")):
             cleaned.append(line)
             continue
             
-        # B. METADATEN-CHECK (Präfix-Liste nutzen)
+        # check for unwanted patterns
         if any(lower.startswith(p) for p in UNWANTED_PREFIXES):
-            logger.debug("Removed Metadata: %s", line[:50])
+            logger.debug("Removed Metadata: %s", line)
             continue
-            
-        # C. LÄNGEN-CHECK (Lange Texte sind fast immer Content)
-        if len(line) > 400:
+        # check long lines
+        if len(line) > 500:
             cleaned.append(line)
             continue
 
-        # D. AUTOREN-CHECK (Heuristik)
+        # maybe an author block
         if is_author_block(line):
-            logger.debug("Removed Author Block: %s", line[:50])
+            logger.debug("Removed Author Block: %s", line)
             continue
-            
+
         cleaned.append(line)
 
     return "\n".join(cleaned)
