@@ -147,7 +147,7 @@ def is_author_block(text: str) -> bool:
     if len(raw_words) < 3: 
         return False
 
-    # Ratio der Wörter, die groß beginnen (Autorennamen)
+    # ratio of capitalized words
     capitals = sum(1 for w in raw_words if w[:1].isupper())
     if capitals / len(raw_words) > 0.8:
         return True
@@ -155,6 +155,8 @@ def is_author_block(text: str) -> bool:
     return False
 
 def clean_content(text: str) -> str:
+    """Removes lines that are likely author blocks 
+    or other non-content artifacts."""
     lines = text.split("\n")
     cleaned = []
 
