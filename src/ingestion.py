@@ -144,6 +144,7 @@ def extract_text(pdf_path: Path) -> dict[str, Any]:
             "doi": doi,
             "pmid": pmid,
             "reference": reference.get("reference"),
+            "reference_source": reference.get("source"),
             "quality": quality,
             "quality_reason": quality_reason,
             "processing_method": "docling_v2_optimized",
@@ -223,18 +224,27 @@ if __name__ == "__main__":
     quality_counts = {"good": 0, "empty": 0, "artifact": 0}
 
     # Lists for reference validation
-    valid_refs = []
-    suspicious_refs = []
-    fallback_refs = []
-
-    print("\n--- Processing Details ---")
+    reference_stats = {
+            "doi": 0,
+            "filename": 0,
+            "title": 0,
+            "nlm": 0,
+            "fallback": 0,
+        }
+    
     for doc in documents:
         # A. Quality Check
         q = doc.get("quality")
         if q in quality_counts:
             quality_counts[q] += 1
 
+        # B. Reference source stats
+        source = doc.get("reference_source")
+        if source in reference_stats:
+            reference_stats[source] += 1
+
         if q in {"empty", "artifact"}:
             print(f"QUALITY ALERT: {doc['filename']} -> {doc.get('quality_reason')}")
 
-        title = doc.get("title")
+    logger.info("Reference stats: %s", reference_stats)
+    logger.info("Quality stats: %s", quality_counts)
