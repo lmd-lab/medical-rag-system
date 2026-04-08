@@ -17,7 +17,8 @@ import ftfy
 
 from src.patterns import (SECTION_HEADERS, UNWANTED_PREFIXES,
                           EMAIL_REGEX, URL_REGEX, MEDICAL_TERMS,
-                          FUNCTION_WORDS)
+                          FUNCTION_WORDS, AFFILIATION_MARKERS, 
+                          ALL_COUNTRIES)
 
 MEDICAL_TERMS_LOWER = {term.lower() for term in MEDICAL_TERMS}
 
@@ -75,41 +76,19 @@ def remove_image_placeholders(text: str) -> str:
 def fix_spaced_caps(text: str) -> str:
     """Fix spaced uppercase headers like A R T I C L E I N F O."""
 
+    pattern = r"^(#+\s*)?((?:[a-zA-Z]\s+){2,}[a-zA-Z])(?=\s|$)"
 
-    lines = text.split("\n")
-    fixed_lines = []
+    matches = re.findall(pattern, text, re.MULTILINE)
+    if matches:
+        logger.debug("Found %d spaced caps: %s",
+                     len(matches), [m[1] for m in matches[:3]])
 
-    pattern = r"(?:[A-Za-z]\s){2,}[A-Za-z]}"
+    def remove_spaces(match):
+        prefix = match.group(1) or ""
+        content = re.sub(r"\s+", "", match.group(2))
+        return f"{prefix}{content}"
 
-    for line in lines:
-        if line.startswith("#"):
-            matches = re.findall(pattern, line)
-
-            if matches:
-                logger.debug(
-                    "Found %d spaced caps in line: %s",
-                    len(matches),
-                    matches[:3]
-                )
-
-                parts = line.split(None, 1)
-
-                if len(parts) > 1:
-                    prefix = parts[0]
-                    content = parts[1]
-
-                    # fix the spaced caps in the content part
-                    content = re.sub(
-                        pattern,
-                        lambda m: m.group(0).replace(" ", ""),
-                        content
-                    )
-
-                    line = f"{prefix} {content}"
-
-        fixed_lines.append(line)
-
-    return "\n".join(fixed_lines)
+    return re.sub(pattern, remove_spaces, text, flags=re.MULTILINE)
 
 
 def add_markdown_headers(text: str) -> str:
@@ -148,6 +127,107 @@ def clean_urls_and_emails(text: str) -> str:
 
 # ---------------- Phase 2: Author cleaning ----------------
 
+def normalize_part(text: str) -> str:
+    """Removes accents and special characters (e.g., 'Alfonso-Reis' -> 'alfonso reis')."""
+    if not text:
+        return ""
+    text = "".join(c for c in unicodedata.normalize('NFKD', text) if not unicodedata.combining(c))
+    return text.lower().replace("-", " ").strip()
+
+def extract_author_surname(author: str) -> str | None:
+    """Extracts the surname of the first author from the author string."""
+    if not author:
+        return None
+
+    return author.split(",")[0].strip().lower()
+
+def is_affiliation_block(block: str) -> bool:
+    """Heuristic to identify blocks that are likely affiliations."""
+    lower = block.lower()
+
+    country_match = any(
+        rf"\b{re.escape(c.lower())}\b" 
+        in lower for c in ALL_COUNTRIES)
+
+    marker_hits = sum(
+        len(re.findall(rf"\b{re.escape(word)}\b", lower))
+        for word in AFFILIATION_MARKERS
+    )
+
+    if country_match and (marker_hits >= 1 or re.search(r"^\d+\s|^[a-z]\s", block.strip())):
+        return True
+
+    if marker_hits >= 2:
+        return True
+
+    return False
+
+
+def remove_author_and_affiliation_block(text: str, author: str = None) -> str:
+    """Removes the author block and likely affiliation lines from the text."""
+    if not author:
+        return text
+
+    surname = normalize_part(extract_author_surname(author))
+    if not surname:
+        return text
+
+    paragraphs = text.split("\n\n")
+    cleaned = []
+    removed_blocks = []
+
+    is_skipping = False
+    author_found = False
+    patience = 2
+    maybe_text_blocks = []
+
+    for i, block in enumerate(paragraphs):
+
+        norm_block = normalize_part(block)
+
+        # 1. look for the author block by surname in the first 20 paragraphs
+        if not author_found and i < 20 and surname in norm_block:
+            removed_blocks.append(block)
+            author_found = True
+            is_skipping = True
+            continue
+
+        if is_skipping:
+            if is_affiliation_block(block):
+                removed_blocks.append(block)
+                removed_blocks.extend(maybe_text_blocks)  
+                maybe_text_blocks = []
+                patience = 2
+                continue
+
+            else:
+                patience -= 1
+                if patience > 0:
+                    maybe_text_blocks.append(block)
+                    continue
+                else:
+                    # End of patience — parked blocks were real content
+                    cleaned.extend(maybe_text_blocks)
+                    cleaned.extend(paragraphs[i:])
+                    break
+
+        cleaned.append(block)
+
+    else:
+        # flush any parked blocks if we never got a clear end signal
+        cleaned.extend(maybe_text_blocks)
+
+    if removed_blocks:
+        logger.debug(
+            "Removed author-related blocks for surname '%s':\n%s",
+            surname,
+            "\n\n--- REMOVED BLOCK ---\n\n".join(removed_blocks)
+        )
+
+    return "\n\n".join(cleaned)
+
+
+# ----FIXME: maybe ditch if other function works and only remove noise from ocr images
 def is_author_block(text: str) -> bool:
     """Heuristic to identify lines that are likely author blocks,"""
     lower_text = text.lower().strip()
@@ -211,7 +291,16 @@ def remove_metadata(text: str) -> str:
     cleaned = []
 
     for line in lines:
-        lower = line.lower().strip()
+        stripped = line.strip()
+        lower = stripped.lower()
+
+        if not stripped:
+            cleaned.append(line)
+            continue
+
+        if len(stripped) > 250:
+            cleaned.append(line)
+            continue
 
         if re.fullmatch(r"\.+", lower):
             logger.debug("Removed dot-only line: %s", line)
@@ -227,20 +316,22 @@ def remove_metadata(text: str) -> str:
 
 # ---------------- Main pipeline ----------------------------
 
-def clean_markdown_text(text: str, filename: str = "unknown") -> str:
+def clean_markdown_text(text: str, filename: str = "unknown", author: str | str = None) -> str:
     """Runs the full cleaning pipeline on the extracted Markdown text."""
     logger.debug("Starting cleaning pipeline for %s", filename)
 
     # Phase 1
     text = super_clean(text)
     text = remove_image_placeholders(text)
-    text = fix_spaced_caps(text)
     text = add_markdown_headers(text)
+    text = fix_spaced_caps(text)
     text = remove_citation_markers(text)
-    text = clean_urls_and_emails(text)
 
     # Phase 2
-    text = clean_content(text)
+    text = remove_author_and_affiliation_block(text, author=author)
+    #text = clean_content(text)
+
+    text = clean_urls_and_emails(text)
 
     # Phase 3
     text = remove_metadata(text)
