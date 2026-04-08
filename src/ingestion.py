@@ -5,6 +5,7 @@ This module handles the ingestion of PDF documents
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 from docling.datamodel.base_models import InputFormat
@@ -21,6 +22,8 @@ from src.reference_resolver import get_reference
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
+# ---------------- Logging -----------------------
+
 logging.basicConfig(
     level=logging.DEBUG, #INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -33,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-# Helper functions -------------------------------------------------------------------------
+# ---------------- Helper Functions ----------------
 
 def extract_doi(text: str) -> str | None:
     """Extracts the DOI from the text using a regex pattern"""
@@ -55,20 +58,20 @@ def extract_pmid(text: str) -> str | None:
     return None
 
 def classify_basic_text_quality(text: str) -> tuple[str, str]:
-    """Basic heuristic to classify text quality as 'good', 'empty', or 'artifact'"""
+    """Basic heuristic to classify text quality as good or empty."""
+
     if not text.strip():
-        return "empty", "text is empty or whitespace only"
+        return "empty", "text is empty"
 
     words = text.split()
 
-    if len(words) <= 2:
-        return "artifact", "too few words"
+    if len(words) < 30:
+        return "empty", "too short"
 
-    unique_ratio = len(set(words)) / len(words)
-    if unique_ratio < 0.2:
-        return "artifact", "too few unique words"
+    if not re.search(r"[A-Za-z]{4,}", text):
+        return "artifact", "no readable text"
 
-    return "good", "enough unique words and no obvious artifact pattern"
+    return "good", ""
 
 def get_first_heading(md_text: str):
     """Extracts the first Markdown heading from the text, 
@@ -78,7 +81,7 @@ def get_first_heading(md_text: str):
             return line.replace("#", "").strip()
     return None
 
-# Extract text and metadata from PDF -------------------------------------------
+# ---------------- Extract text and metadata from PDF -------------------------------------------
 
 def extract_text(pdf_path: Path) -> dict[str, Any]:
     """Extracts text and metadata from a PDF file using docling"""
@@ -128,7 +131,7 @@ def extract_text(pdf_path: Path) -> dict[str, Any]:
         # TO-DO: use the reference to also remove author names, affiliations, etc. from the text to reduce noise for chunking and embedding
 
         # clean Markdown from artifacts
-        cleaned_markdown = clean_markdown_text(markdown_text, filename=pdf_path.name)
+        cleaned_markdown = clean_markdown_text(markdown_text, filename=pdf_path.name, author=reference.get("author"))
 
 
         return {
@@ -157,7 +160,7 @@ def extract_text(pdf_path: Path) -> dict[str, Any]:
         print(f"Unexpected error processing {pdf_path}: {e}")
         raise
 
-# Load and save results ----------------------------------------------------------------
+# ---------------- Load and save results ----------------------------
 
 def load_all_pdfs(folder_path: Path) -> list[dict[str, Any]]:
     """Loads and processes all PDF files in the specified folder, 
@@ -212,7 +215,7 @@ def save_documents_to_processed(
 
     return saved_files
 
-# Main execution -----------------------------------------------------------------------
+# ---------------- Main execution ---------------------------------------
 
 if __name__ == "__main__":
     # Procsessing
