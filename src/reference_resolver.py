@@ -307,7 +307,7 @@ def get_reference(
         "journal": None,
         "publisher": None,
         "doi": doi,
-        "type": "fallback",
+        "type": "other",
         "source": "fallback",
     }
 
