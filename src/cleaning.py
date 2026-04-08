@@ -73,22 +73,38 @@ def remove_image_placeholders(text: str) -> str:
 
 
 def fix_spaced_caps(text: str) -> str:
-    """Fixes A R T I C L E I N F O in headers with any number of # symbols."""
+    """Fix spaced uppercase headers like A R T I C L E I N F O."""
+
 
     lines = text.split("\n")
     fixed_lines = []
 
+    pattern = r"(?:[A-Za-z]\s){2,}[A-Za-z]}"
+
     for line in lines:
         if line.startswith("#"):
-            pattern = r"([a-zA-Z]\s){2,}[a-zA-Z]"
             matches = re.findall(pattern, line)
+
             if matches:
-                logger.debug("Found %d spaced caps: %s",
-                     len(matches), [m[1] for m in matches[:3]])
-                parts = line.split(None, 1) 
+                logger.debug(
+                    "Found %d spaced caps in line: %s",
+                    len(matches),
+                    matches[:3]
+                )
+
+                parts = line.split(None, 1)
+
                 if len(parts) > 1:
-                    prefix = parts[0] 
-                    content = parts[1].replace(" ", "")
+                    prefix = parts[0]
+                    content = parts[1]
+
+                    # fix the spaced caps in the content part
+                    content = re.sub(
+                        pattern,
+                        lambda m: m.group(0).replace(" ", ""),
+                        content
+                    )
+
                     line = f"{prefix} {content}"
 
         fixed_lines.append(line)
@@ -136,7 +152,7 @@ def is_author_block(text: str) -> bool:
     """Heuristic to identify lines that are likely author blocks,"""
     lower_text = text.lower().strip()
     words_in_line = re.findall(r"[a-z]+", lower_text)
-    
+
     if any(word in FUNCTION_WORDS for word in words_in_line):
         return False
 
@@ -144,7 +160,7 @@ def is_author_block(text: str) -> bool:
         return False
 
     raw_words = text.split()
-    if len(raw_words) < 3: 
+    if len(raw_words) < 3:
         return False
 
     # ratio of capitalized words
@@ -167,7 +183,7 @@ def clean_content(text: str) -> str:
         if not lower or line.startswith(("#", "|", "*", "-")):
             cleaned.append(line)
             continue
-            
+
         # check for unwanted patterns
         if any(lower.startswith(p) for p in UNWANTED_PREFIXES):
             logger.debug("Removed Metadata: %s", line)
