@@ -168,7 +168,7 @@ def clean_urls_and_emails(text: str) -> str:
 
     return text
 
-# ---------------- Phase 2: Author cleaning ----------------
+# ---------------- Phase 2: Content cleaning ----------------
 
 def normalize_part(text: str) -> str:
     """Removes accents and special characters."""
