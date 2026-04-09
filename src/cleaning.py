@@ -12,15 +12,14 @@ import os
 import re
 import unicodedata
 from datetime import datetime
+from urlextract import URLExtract
 
 import ftfy
 
 from src.patterns import (SECTION_HEADERS, UNWANTED_PREFIXES,
-                          EMAIL_REGEX, URL_REGEX, MEDICAL_TERMS,
-                          FUNCTION_WORDS, AFFILIATION_MARKERS, 
-                          ALL_COUNTRIES)
-
-MEDICAL_TERMS_LOWER = {term.lower() for term in MEDICAL_TERMS}
+                          EMAIL_REGEX, ALL_COUNTRIES,
+                          FUNCTION_WORDS, AFFILIATION_MARKERS,
+                          DATE_LINE_PATTERN, INLINE_FOOTERS)
 
 
 # ---------------- Logging ----------------
@@ -48,10 +47,15 @@ def super_clean(text: str) -> str:
     if not text:
         return ""
 
-    text = html.unescape(text)
     text = ftfy.fix_text(text)
-    text = unicodedata.normalize('NFKC', text)
 
+    while "&" in text:
+        new_text = html.unescape(text)
+        if new_text == text:
+            break
+        text = new_text
+
+    text = unicodedata.normalize('NFKC', text)
     text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
 
     special_fixes = {
@@ -63,6 +67,21 @@ def super_clean(text: str) -> str:
     for search, replace in special_fixes.items():
         text = text.replace(search, replace)
 
+    return text
+
+
+def remove_markdown_links(text: str) -> str:
+    """Removes Markdown links, keeping only the link text."""
+    pattern = r"\[([^\]]+)\]\(([^)]+)\)"
+    links = [
+        {"text": match.group(1), "url": match.group(2)}
+        for match in re.finditer(pattern, text)
+    ]
+
+    if links:
+        logger.debug("Found Markdown links: %s", links)
+
+    text = re.sub(pattern, r"\1", text)
     return text
 
 
@@ -113,52 +132,109 @@ def remove_citation_markers(text: str) -> str:
 
 
 def clean_urls_and_emails(text: str) -> str:
-    """Removes email addresses and URLs from the text."""
-    email_count = len(EMAIL_REGEX.findall(text))
-    url_count = len(URL_REGEX.findall(text))
+    """Removes URLs and email addresses from the text, 
+    and also removes empty parentheses or brackets left behind."""
+    extractor = URLExtract()
+    emails = EMAIL_REGEX.findall(text)
+    urls = extractor.find_urls(text)
+
+    unique_emails = list(dict.fromkeys(e.strip() for e in emails if e.strip()))
+    unique_urls = list(dict.fromkeys(u.strip() for u in urls if u.strip()))
+
+    email_count = len(unique_emails)
+    url_count = len(unique_urls)
 
     text = EMAIL_REGEX.sub('', text)
-    text = URL_REGEX.sub('', text)
 
-    logger.debug("Removed %d emails", email_count)
-    logger.debug("Removed %d URLs", url_count)
+    for url in unique_urls:
+        text = text.replace(url, "")
+
+    # replace empty parentheses or brackets with a single space to avoid leftover artifacts
+    #text, paren_count = re.compile(r'\s*(\(\s*\)|\[\s*\])\.?\s*').subn(' ', text)
+    text, paren_count = re.compile(r'[ \t]*(\(\s*\)|\[\s*\])\.?[ \t]*').subn('', text)
+    text = re.sub(r' +', ' ', text).strip()
+
+    if unique_emails:
+        logger.debug("Removed %d emails:\n%s", email_count, "\n".join(unique_emails))
+    else:
+        logger.debug("Removed %d emails", email_count)
+
+    if unique_urls:
+        logger.debug("Removed %d URLs:\n%s", url_count, "\n".join(unique_urls))
+    else:
+        logger.debug("Removed %d URLs", url_count)
+
+    logger.debug("Removed %d empty parentheses/brackets", paren_count)
 
     return text
 
 # ---------------- Phase 2: Author cleaning ----------------
 
 def normalize_part(text: str) -> str:
-    """Removes accents and special characters (e.g., 'Alfonso-Reis' -> 'alfonso reis')."""
+    """Removes accents and special characters."""
     if not text:
         return ""
+
     text = "".join(c for c in unicodedata.normalize('NFKD', text) if not unicodedata.combining(c))
+    text = "".join(c for c in unicodedata.normalize('NFKD', text) if not unicodedata.combining(c))
+    text = re.sub(r"[\u2010\u2011\u2012\u2013\u2014\u2212]", "-", text)
+
     return text.lower().replace("-", " ").strip()
 
+
 def extract_author_surname(author: str) -> str | None:
-    """Extracts the surname of the first author from the author string."""
+    """Extract surname of first author, skipping surname particles."""
+
     if not author:
         return None
 
-    return author.split(",")[0].strip().lower()
+    surname = author.split(",")[0].strip().lower()
+
+    particles = {"van", "von", "de", "del", "der", "den", "da", "di", "la", "le"}
+
+    parts = surname.split()
+
+    # use last meaningful surname part if particle exists
+    if len(parts) > 1 and parts[0] in particles:
+        return parts[-1]
+
+    return surname
+
 
 def is_affiliation_block(block: str) -> bool:
     """Heuristic to identify blocks that are likely affiliations."""
+    # skip numbers
+    #if re.fullmatch(r"\s*\d+\s*", block.strip()):
+    #    return True
+
+    #if re.fullmatch(r"\s*[a-zA-Z]\s*", block.strip()):
+    #    return True
+
     lower = block.lower()
 
     country_match = any(
-        rf"\b{re.escape(c.lower())}\b" 
-        in lower for c in ALL_COUNTRIES)
+            re.search(rf"\b{re.escape(c.lower())}\b", lower)
+            for c in ALL_COUNTRIES
+        )
 
-    marker_hits = sum(
-        len(re.findall(rf"\b{re.escape(word)}\b", lower))
-        for word in AFFILIATION_MARKERS
-    )
+    marker_set = {
+        w for w in AFFILIATION_MARKERS
+        if re.search(rf"\b{re.escape(w)}\b", lower)
+    }
+    marker_hits = len(marker_set)
 
-    if country_match and (marker_hits >= 1 or re.search(r"^\d+\s|^[a-z]\s", block.strip())):
+    if country_match and marker_hits >= 1:
         return True
 
     if marker_hits >= 2:
         return True
+
+    #logger.debug(
+    #    "AFFILIATION CHECK | block=%s | country=%s | markers=%s",
+    #    block,
+    #    country_match,
+    #    marker_hits
+    #)
 
     return False
 
@@ -168,121 +244,137 @@ def remove_author_and_affiliation_block(text: str, author: str = None) -> str:
     if not author:
         return text
 
-    surname = normalize_part(extract_author_surname(author))
+    raw_surname = extract_author_surname(author)
+    # remove accents and special characters for
+    # better matching (e.g., 'Alfonso-Reis' -> 'alfonso reis')
+    raw_surname = re.split(r'\s+', raw_surname)[0]
+    surname = normalize_part(raw_surname)
+
     if not surname:
         return text
 
     paragraphs = text.split("\n\n")
     cleaned = []
-    removed_blocks = []
-
-    is_skipping = False
-    author_found = False
-    patience = 2
-    maybe_text_blocks = []
+    removed_author_blocks = []
+    removed_affiliation_blocks = []
 
     for i, block in enumerate(paragraphs):
+        block_words = re.findall(r"[a-z]+", block.lower())
+        function_word_hits = len({w for w in block_words if w in FUNCTION_WORDS})
 
         norm_block = normalize_part(block)
 
-        # 1. look for the author block by surname in the first 20 paragraphs
-        if not author_found and i < 20 and surname in norm_block:
-            removed_blocks.append(block)
-            author_found = True
-            is_skipping = True
-            continue
-
-        if is_skipping:
-            if is_affiliation_block(block):
-                removed_blocks.append(block)
-                removed_blocks.extend(maybe_text_blocks)  
-                maybe_text_blocks = []
-                patience = 2
+        # 1. search author block based on surname in the first 20 paragraphs
+        if i < 20 and re.search(rf'\b{re.escape(surname)}\b', norm_block):
+            # if surname is followed by et al., it's likely an inline citation
+            if re.search(rf"{re.escape(surname)}\s+et\s+al", norm_block) and function_word_hits > 3:
+                cleaned.append(block)
                 continue
 
-            else:
-                patience -= 1
-                if patience > 0:
-                    maybe_text_blocks.append(block)
-                    continue
-                else:
-                    # End of patience — parked blocks were real content
-                    cleaned.extend(maybe_text_blocks)
-                    cleaned.extend(paragraphs[i:])
-                    break
+            if function_word_hits > 3:
+                cleaned.append(block)
+                continue
+
+            removed_author_blocks.append(block)
+            continue
+
+        # 2. remove blocks that are likely affiliations based on heuristics
+        elif i < 50 and is_affiliation_block(block):
+
+            if function_word_hits > 3:
+                cleaned.append(block)
+                continue
+
+            removed_affiliation_blocks.append(block)
+            continue
 
         cleaned.append(block)
 
-    else:
-        # flush any parked blocks if we never got a clear end signal
-        cleaned.extend(maybe_text_blocks)
-
-    if removed_blocks:
+    if removed_author_blocks:
         logger.debug(
-            "Removed author-related blocks for surname '%s':\n%s",
+            "Removed author-related blocks for surname '%s':\n\n%s",
             surname,
-            "\n\n--- REMOVED BLOCK ---\n\n".join(removed_blocks)
+            "\n\n--- REMOVED AUTHOR BLOCK: ".join(removed_author_blocks)
+        )
+
+    if removed_affiliation_blocks:
+        logger.debug(
+            "Removed affiliation-related blocks:\n\n%s",
+            "\n\n--- REMOVED AFFILIATION BLOCK: ".join(removed_affiliation_blocks)
         )
 
     return "\n\n".join(cleaned)
 
 
-# ----FIXME: maybe ditch if other function works and only remove noise from ocr images
-def is_author_block(text: str) -> bool:
-    """Heuristic to identify lines that are likely author blocks,"""
-    lower_text = text.lower().strip()
-    words_in_line = re.findall(r"[a-z]+", lower_text)
+def remove_journal_lines(text: str, journal: str = None) -> str:
+    """
+    Removes lines that start with or exactly match the journal name.
+    Useful for recurring headers/footers inserted by PDF extraction tools.
+    """
 
-    if any(word in FUNCTION_WORDS for word in words_in_line):
-        return False
+    if not journal:
+        return text
 
-    if any(word in MEDICAL_TERMS_LOWER for word in words_in_line):
-        return False
+    # normalize journal name once
+    journal_norm = normalize_part(journal)
 
-    raw_words = text.split()
-    if len(raw_words) < 3:
-        return False
-
-    # ratio of capitalized words
-    capitals = sum(1 for w in raw_words if w[:1].isupper())
-    if capitals / len(raw_words) > 0.8:
-        return True
-
-    return False
-
-def clean_content(text: str) -> str:
-    """Removes lines that are likely author blocks 
-    or other non-content artifacts."""
     lines = text.split("\n")
     cleaned = []
+    removed = []
 
     for line in lines:
-        lower = line.lower().strip()
+        norm_line = normalize_part(line)
 
-        # always keep section headers, tables and lists
-        if not lower or line.startswith(("#", "|", "*", "-")):
+        # skip empty lines
+        if not norm_line:
             cleaned.append(line)
             continue
 
-        # check for unwanted patterns
-        if any(lower.startswith(p) for p in UNWANTED_PREFIXES):
-            logger.debug("Removed Metadata: %s", line)
-            continue
-        # check long lines
-        if len(line) > 500:
-            cleaned.append(line)
-            continue
-
-        # maybe an author block
-        if is_author_block(line):
-            logger.debug("Removed Author Block: %s", line)
+        # match: line starts with journal OR equals journal
+        if norm_line.startswith(journal_norm) or norm_line == journal_norm:
+            removed.append(line)
             continue
 
         cleaned.append(line)
 
+    if removed:
+        logger.debug(
+            "Removed journal lines for '%s':\n\n%s",
+            journal,
+            "\n".join(removed)  
+        )
+
     return "\n".join(cleaned)
 
 # ---------------- Phase 3: Metadata ----------------
+
+def is_date_metadata_line(line: str) -> bool:
+    """Heuristic to identify lines that likely contain date metadata,
+    such as 'March 2021' or 'Received January 15, 2020', and not regular text."""
+    stripped = line.strip()
+
+    # Line must be short (date lines are rarely longer than ~60 characters)
+    if len(stripped) > 60:
+        return False
+
+    return bool(DATE_LINE_PATTERN.match(stripped))
+
+def remove_inline_footer_terms(line: str) -> tuple[str, list[str]]:
+    """Removes exact inline footer terms from a line and returns removed terms."""
+    cleaned = line
+    removed_terms: list[str] = []
+
+    for term in INLINE_FOOTERS:
+        pattern = re.compile(rf"(?<!\\w){re.escape(term)}(?!\\w)", flags=re.IGNORECASE)
+        cleaned, count = pattern.subn("", cleaned)
+        if count > 0:
+            removed_terms.append(term)
+
+    # Clean up only spacing artifacts introduced by removals.
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"^\s+", "", cleaned)
+
+    return cleaned, removed_terms
 
 def remove_metadata(text: str) -> str:
     """Removes lines that start with common 
@@ -298,16 +390,33 @@ def remove_metadata(text: str) -> str:
             cleaned.append(line)
             continue
 
-        if len(stripped) > 250:
-            cleaned.append(line)
-            continue
-
-        if re.fullmatch(r"\.+", lower):
+        # remove lines that are just dots or similar
+        if re.fullmatch(r"[\s.]+", lower):
             logger.debug("Removed dot-only line: %s", line)
             continue
 
+        # check for unwanted patterns like additional information, corresponding author, etc.
+        lower = unicodedata.normalize('NFKC', stripped).lower()
+        lower = lower.replace('✩', '*').replace('∗', '*')
+
         if any(lower.startswith(prefix) for prefix in UNWANTED_PREFIXES):
             logger.debug("Removed metadata line: %s", line)
+            continue
+
+        if is_date_metadata_line(stripped):
+            logger.debug("Removed date metadata line: %s", line)
+            continue
+
+        cleaned_line, removed_footer_terms = remove_inline_footer_terms(line)
+        if removed_footer_terms:
+            logger.debug(
+                "Removed inline footer terms %s from line: %s",
+                removed_footer_terms,
+                line
+            )
+            if not cleaned_line.strip():
+                continue
+            cleaned.append(cleaned_line)
             continue
 
         cleaned.append(line)
@@ -316,26 +425,32 @@ def remove_metadata(text: str) -> str:
 
 # ---------------- Main pipeline ----------------------------
 
-def clean_markdown_text(text: str, filename: str = "unknown", author: str | str = None) -> str:
+def clean_markdown_text(text: str,
+                        filename: str = "unknown",
+                        author: str | str = None,
+                        journal: str | str = None) -> str:
     """Runs the full cleaning pipeline on the extracted Markdown text."""
     logger.debug("Starting cleaning pipeline for %s", filename)
 
     # Phase 1
     text = super_clean(text)
+    text = remove_markdown_links(text)
     text = remove_image_placeholders(text)
-    text = add_markdown_headers(text)
     text = fix_spaced_caps(text)
+    text = add_markdown_headers(text)
     text = remove_citation_markers(text)
 
     # Phase 2
     text = remove_author_and_affiliation_block(text, author=author)
-    #text = clean_content(text)
-
-    text = clean_urls_and_emails(text)
+    text = remove_journal_lines(text, journal=journal)
 
     # Phase 3
     text = remove_metadata(text)
+    text = clean_urls_and_emails(text)
 
-    logger.debug("Finished cleaning pipeline for %s", filename)
+    # cleanup multiple newlines and trim
+    text = re.sub(r'\n{3,}', '\n\n', text).strip()
+
+    logger.debug("Finished cleaning pipeline for %s\n\n", filename)
 
     return text.strip()
