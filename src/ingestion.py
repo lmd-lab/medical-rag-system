@@ -81,7 +81,7 @@ def get_first_heading(md_text: str):
             return line.replace("#", "").strip()
     return None
 
-# ---------------- Extract text and metadata from PDF -------------------------------------------
+# ---------------- Extract text and metadata from PDF -----------------------------
 
 def extract_text(pdf_path: Path) -> dict[str, Any]:
     """Extracts text and metadata from a PDF file using docling"""
@@ -123,15 +123,10 @@ def extract_text(pdf_path: Path) -> dict[str, Any]:
             text=markdown_text,
         )
 
-        # MOVE TO CLEANING: Remove journal name from text to reduce noise for chunking and embedding
-        # remove journal if present in reference from text to reduce noise
-        # cleaned_markdown = remove_journal_from_text(cleaned_markdown,
-        #                                            reference,
-        #                                        filename=pdf_path.name)
-        # TO-DO: use the reference to also remove author names, affiliations, etc. from the text to reduce noise for chunking and embedding
-
         # clean Markdown from artifacts
-        cleaned_markdown = clean_markdown_text(markdown_text, filename=pdf_path.name, author=reference.get("author"))
+        cleaned_markdown = clean_markdown_text(markdown_text, filename=pdf_path.name,
+                                               author=reference.get("author"),
+                                               journal=reference.get("journal"))
 
 
         return {
@@ -234,7 +229,7 @@ if __name__ == "__main__":
             "nlm": 0,
             "fallback": 0,
         }
-    
+
     for doc in documents:
         # A. Quality Check
         q = doc.get("quality")
@@ -251,3 +246,4 @@ if __name__ == "__main__":
 
     logger.info("Reference stats: %s", reference_stats)
     logger.info("Quality stats: %s", quality_counts)
+    
