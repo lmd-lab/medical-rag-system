@@ -126,7 +126,7 @@ def extract_text(pdf_path: Path) -> dict[str, Any]:
         # clean Markdown from artifacts
         cleaned_markdown = clean_markdown_text(markdown_text,
                                                filename=pdf_path.name,
-                                               author=reference.get("author"),
+                                               author=reference.get("first_author"),
                                                journal=reference.get("journal"))
 
 
@@ -134,7 +134,8 @@ def extract_text(pdf_path: Path) -> dict[str, Any]:
             "filename": pdf_path.name,
             "path": str(pdf_path),
             "first_heading": first_heading,
-            "author": reference.get("author"),
+            "authors": reference.get("authors"),
+            "first_author": reference.get("first_author"),
             "title": reference.get("title"),
             "year": reference.get("year"),
             "journal": reference.get("journal"),
