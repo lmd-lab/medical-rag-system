@@ -124,7 +124,8 @@ def extract_text(pdf_path: Path) -> dict[str, Any]:
         )
 
         # clean Markdown from artifacts
-        cleaned_markdown = clean_markdown_text(markdown_text, filename=pdf_path.name,
+        cleaned_markdown = clean_markdown_text(markdown_text,
+                                               filename=pdf_path.name,
                                                author=reference.get("author"),
                                                journal=reference.get("journal"))
 
@@ -244,6 +245,6 @@ if __name__ == "__main__":
         if q in {"empty", "artifact"}:
             print(f"QUALITY ALERT: {doc['filename']} -> {doc.get('quality_reason')}")
 
-    logger.info("Reference stats: %s", reference_stats)
     logger.info("Quality stats: %s", quality_counts)
-    
+    logger.info("Reference stats: %s", reference_stats)
+
