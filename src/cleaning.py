@@ -12,9 +12,10 @@ import os
 import re
 import unicodedata
 from datetime import datetime
-from urlextract import URLExtract
+from difflib import get_close_matches
 
 import ftfy
+from urlextract import URLExtract
 
 from src.patterns import (SECTION_HEADERS, UNWANTED_PREFIXES,
                           EMAIL_REGEX, ALL_COUNTRIES,
@@ -99,13 +100,41 @@ def fix_spaced_caps(text: str) -> str:
 
     matches = re.findall(pattern, text, re.MULTILINE)
     if matches:
-        logger.debug("Found %d spaced caps: %s",
-                     len(matches), [m[1] for m in matches[:3]])
+        logger.debug(
+            "Found %d spaced caps: %s",
+            len(matches),
+            [m[1] for m in matches[:3]]
+        )
 
     def remove_spaces(match):
         prefix = match.group(1) or ""
-        content = re.sub(r"\s+", "", match.group(2))
-        return f"{prefix}{content}"
+        raw_content = match.group(2)
+        content = re.sub(r"\s+", "", raw_content).upper()
+
+        # try to match known header 
+        header_match = get_close_matches(content, SECTION_HEADERS, n=1, cutoff=0.8)
+
+        # CASE 1: markdown heading → always fix
+        if prefix:
+            fixed = header_match[0] if header_match else content
+            logger.debug(
+                "Fixed header (forced): '%s' -> '%s'",
+                raw_content,
+                fixed
+            )
+            return f"{prefix}{fixed}"
+
+        # CASE 2: only fix if it matches a known header
+        if header_match:
+            logger.debug(
+                "Fixed header (matched): '%s' -> '%s'",
+                raw_content,
+                header_match[0]
+            )
+            return f"{prefix}{header_match[0]}"
+
+        # CASE 3: leave unchanged
+        return match.group(0)
 
     return re.sub(pattern, remove_spaces, text, flags=re.MULTILINE)
 
