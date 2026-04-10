@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 CONTACT_EMAIL = os.getenv("CONTACT_EMAIL", "default@example.com")
+CROSSREF_MIN_SCORE = 25
 
 # ---------------- Logging -----------------------
 
@@ -106,6 +107,53 @@ def validate_candidate(candidate: dict, text: str, source: str, filename: str = 
 
 # ---------------- NLM ----------------
 
+def nlm_parse(full_citation):
+    """Tries to flexibly parse an NLM citation string into authors, title, and year."""
+    # 1. Find the year first as a pivot point (4-digit number starting with 19 or 20)
+    year_match = re.search(r"\b((?:19|20)\d{2})\b", full_citation)
+    year = year_match.group(1) if year_match else "Unknown Year"
+
+    # 2. separate author and title using the year as a pivot
+    split_match = re.split(r"\.\s+(?=[A-Z])", full_citation, maxsplit=2)
+
+    if len(split_match) >= 2:
+        authors = split_match[0]
+        title = split_match[1]
+    else:
+        parts = full_citation.split(". ")
+        authors = parts[0]
+        title = parts[1] if len(parts) > 1 else "Unknown Title"
+
+    return authors, title, year
+
+
+def split_nlm_authors(authors_raw: str) -> list[str]:
+    """Split an NLM author segment into a best-effort author list."""
+    if not authors_raw:
+        return []
+
+    cleaned = re.sub(r"\s+", " ", authors_raw).strip()
+    cleaned = re.sub(r",?\s*editors?\.?$", "", cleaned, flags=re.IGNORECASE).strip()
+
+    # Common NLM patterns: "A and B", "A; B", "A, B, C"
+    if " and " in cleaned:
+        parts = [p.strip() for p in cleaned.split(" and ")]
+    elif ";" in cleaned:
+        parts = [p.strip() for p in cleaned.split(";")]
+    elif "," in cleaned:
+        comma_parts = [p.strip() for p in cleaned.split(",") if p.strip()]
+        comma_parts = [p for p in comma_parts if not re.fullmatch(r"et al\.?", p, re.IGNORECASE)]
+        looks_like_author_list = (
+            len(comma_parts) >= 2
+            and all(re.search(r"\s+[A-Z]{1,4}\.?$", p) for p in comma_parts)
+        )
+        parts = comma_parts if looks_like_author_list else [cleaned]
+    else:
+        parts = [cleaned]
+
+    return [p for p in parts if p]
+
+
 def extract_nlm_info(text) -> dict:
     """Extract citation information from NLM Citation format."""
 
@@ -119,26 +167,15 @@ def extract_nlm_info(text) -> dict:
 
     full_citation = " ".join(match.group(1).split())
 
-    # robust author/title extraction
-    parts_match = re.search(
-        r"^(.*?)\.\s+(.*?)\.\s+.*?\b((?:19|20)\d{2})\b",
-        full_citation,
-    )
-
-    if parts_match:
-        author, title, year = parts_match.groups()
-    else:
-        parts = [p.strip() for p in full_citation.split('. ')]
-        author = parts[0] if len(parts) > 0 else "Unknown Author"
-        title = parts[1] if len(parts) > 1 else "Unknown Title"
-
-        year_match = re.search(r"\b((?:19|20)\d{2})\b", full_citation)
-        year = year_match.group(0) if year_match else "Unknown Year"
+    authors_raw, title, year = nlm_parse(full_citation)
+    authors = split_nlm_authors(authors_raw)
+    first_author = authors[0] if authors else None
 
     return {
         "reference": full_citation,
         "title": title,
-        "author": author,
+        "authors": authors,
+        "first_author": first_author,
         "year": year,
         "journal": "GeneReviews® [Internet]",
         "publisher": "University of Washington, Seattle",
@@ -148,21 +185,32 @@ def extract_nlm_info(text) -> dict:
 
 # ---------------- CROSSREF ----------------
 
+def build_crossref_author_list(authors: list[dict]) -> list[str]:
+    """Build a clean author list from Crossref author objects."""
+    names: list[str] = []
+    for author in authors:
+        family = (author.get("family") or "").strip()
+        given = (author.get("given") or "").strip()
+        if family and given:
+            names.append(f"{family}, {given}")
+        elif family:
+            names.append(family)
+        elif given:
+            names.append(given)
+
+    return names
+
 def build_reference(item: dict):
     """Builds a standardized reference string 
     and extracts metadata from a Crossref item."""
     authors = item.get("author", [])
 
     first_author = "Unknown"
-
     if authors:
         family = authors[0].get("family", "")
         given = authors[0].get("given", "")
         initials = f"{given[0]}." if given else ""
         first_author = f"{family}, {initials}"
-
-        if len(authors) > 1:
-            first_author += " et al."
 
     if not authors or not authors[0].get("family"):
         return None
@@ -180,30 +228,29 @@ def build_reference(item: dict):
     journal = item.get("container-title", [""])
     journal = journal[0] if journal else ""
 
-    volume = item.get("volume", "")
-    issue = item.get("issue", "")
-
     doi = item.get("DOI", "")
     publisher = item.get("publisher", "")
 
+    display_name = f"{first_author} et al." if len(authors) > 1 else first_author
     reference = (
-        f"{first_author} ({year}). {title}. "
+        f"{display_name} ({year}). {title}. "
         f"{journal}"
     )
 
-    if volume:
-        reference += f", {volume}"
+    if item.get("volume"):
+        reference += f", {item.get('volume')}"
+    if item.get("issue"):
+        reference += f"({item.get('issue')})"
+    if item.get("DOI"):
+        reference += f". https://doi.org/{item.get('DOI')}"
 
-    if issue:
-        reference += f"({issue})"
-
-    if doi:
-        reference += f". https://doi.org/{doi}"
+    all_authors = build_crossref_author_list(authors)
 
     return {
         "reference": reference,
         "title": title,
-        "author": first_author,
+        "authors": all_authors,
+        "first_author": first_author,
         "year": year,
         "journal": journal,
         "publisher": publisher,
@@ -230,7 +277,15 @@ def query_crossref_by_text(query: str, base_url: str) -> dict:
 
             if items:
                 best_match = items[0]
-                if best_match.get("score", 0) < 25:
+                score = best_match.get("score", 0)
+                if score < CROSSREF_MIN_SCORE:
+                    logger.debug(
+                        "Crossref candidate rejected for query '%s' (score=%s, threshold=%s, title='%s')",
+                        query,
+                        score,
+                        CROSSREF_MIN_SCORE,
+                        (best_match.get("title") or [""])[0],
+                    )
                     return None
 
                 return build_reference(best_match)
@@ -251,8 +306,6 @@ def get_reference(
 
     base_url = "https://api.crossref.org"
 
-    result = None
-
     # 1. one special case NLM citation
     if text and "NLM Citation:" in text[:2000]:
         candidate = extract_nlm_info(text[:2000])
@@ -262,7 +315,7 @@ def get_reference(
             return validated
 
     # 2. DOI lookup
-    if doi and not result:
+    if doi:
         try:
             headers = {"User-Agent": f"Medical RAG (mailto:{CONTACT_EMAIL})"}
 
@@ -302,7 +355,8 @@ def get_reference(
     fallback = {
         "reference": clean_filename_reference(filename) if filename else "Unknown Source",
         "title": query_title or "",
-        "author": None,
+        "authors": [],
+        "first_author": None,
         "year": None,
         "journal": None,
         "publisher": None,
