@@ -4,6 +4,7 @@ channels:
 dependencies:
   - python=3.11
   - pip
+  - ipykernel
   - cxx-compiler
   - cmake
   - setuptools
@@ -16,6 +17,9 @@ dependencies:
       - pymupdf
       - pandas
       - ftfy
+      - python-dotenv
+      - urlextract
+      - pycountry
 
 
 
