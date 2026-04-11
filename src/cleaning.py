@@ -1,10 +1,12 @@
 """
-Simplified PDF text cleaning pipeline:
+PDF text cleaning pipeline:
 1. Artifact cleaning
 2. Content cleaning
 3. Metadata removal
 4. URL / email cleanup
 """
+
+# TODO: Refactoring
 
 import html
 import logging
@@ -12,7 +14,8 @@ import os
 import re
 import unicodedata
 from datetime import datetime
-from difflib import get_close_matches
+from difflib import get_close_matches, SequenceMatcher
+from collections import Counter
 
 import ftfy
 from urlextract import URLExtract
@@ -111,7 +114,7 @@ def fix_spaced_caps(text: str) -> str:
         raw_content = match.group(2)
         content = re.sub(r"\s+", "", raw_content).upper()
 
-        # try to match known header 
+        # try to match known header
         header_match = get_close_matches(content, SECTION_HEADERS, n=1, cutoff=0.8)
 
         # CASE 1: markdown heading → always fix
@@ -139,14 +142,93 @@ def fix_spaced_caps(text: str) -> str:
     return re.sub(pattern, remove_spaces, text, flags=re.MULTILINE)
 
 
+def clean_headers(text: str, title: str | bool | None) -> str:
+    """
+    Cleans Markdown headers based on specific rules.
+    """
+    lines = text.splitlines()
+    # Count how often each heading appears (only lines starting with #)
+    heading_counts = Counter([line.lstrip('#').strip() for line in lines if line.startswith('#')])
+
+    cleaned_lines = []
+
+    # Stats for logging
+    stats = {
+        "removed_hashes_figure": 0,
+        "deleted_title_match": 0,
+        "removed_hashes_unwanted": 0,
+        "removed_hashes_long": 0,
+        "deleted_duplicate_headings": 0
+    }
+
+    for line in lines:
+        stripped_line = line.strip()
+
+        # Check if the line is a heading
+        if stripped_line.startswith('#'):
+            # Strip # markers and whitespace for content comparison
+            header_content = stripped_line.lstrip('#').strip()
+            num_words = len(header_content.split())
+
+            # 1. Heading matches the title exactly → delete entirely
+            if title and isinstance(title, str):
+                clean_title = title.strip().lower().rstrip('.')
+                clean_header = header_content.lower().rstrip('.')
+                
+                if clean_header == clean_title or SequenceMatcher(None, clean_header, clean_title).ratio() > 0.9:
+                    stats["deleted_title_match"] += 1
+                    logger.debug("Deleted heading matching title: %s", header_content)
+                    continue
+
+            # 2. Headings appearing more than 5 times (except "References") → delete entirely
+            if heading_counts[header_content] > 5 and header_content.lower() != "references":
+                stats["deleted_duplicate_headings"] += 1
+                logger.debug("Deleted duplicate heading (>5x): %s", header_content)
+                continue
+
+            # 3. Header demotion: remove # markers but keep the text
+            should_degrade = False
+
+            # - heading starts with "Figure"
+            if header_content.lower().startswith("figure"):
+                stats["removed_hashes_figure"] += 1
+                logger.debug("Demoted 'Figure' heading: %s", header_content)
+                should_degrade = True
+
+            # - heading starts with an unwanted pattern
+            elif any(header_content.lower().startswith(p) for p in UNWANTED_PREFIXES):
+                stats["removed_hashes_unwanted"] += 1
+                logger.debug("Demoted unwanted-pattern heading: %s", header_content)
+                should_degrade = True
+
+            # - heading is longer than 18 words
+            elif num_words > 18:
+                stats["removed_hashes_long"] += 1
+                logger.debug("Demoted long heading (>18 words): %s", header_content)
+                should_degrade = True
+
+            if should_degrade:
+                cleaned_lines.append(header_content)
+                continue
+
+        # No rule matched or not a heading: keep the line
+        cleaned_lines.append(line)
+
+    # Log results
+    logger.info("Header cleaning complete: %s", stats)
+
+    return "\n".join(cleaned_lines)
+
+
 def add_markdown_headers(text: str) -> str:
     """Adds Markdown headers before section titles like ABSTRACT, INTRODUCTION, etc."""
     for header in SECTION_HEADERS:
         pattern = rf"(?im)^[ \t]*({re.escape(header)})[ \t]*$"
         text, count = re.subn(pattern, r"\n# \1\n", text)
 
-        if count > 0:
-            logger.debug("Fixed lonely header: '%s' (%d occurrences)", header, count)
+    if count > 0:
+        logger.debug("Fixed lonely header: '%s' (%d occurrences)", header, count)
+
     return text
 
 
@@ -183,15 +265,11 @@ def clean_urls_and_emails(text: str) -> str:
     text, paren_count = re.compile(r'[ \t]*(\(\s*\)|\[\s*\])\.?[ \t]*').subn('', text)
     text = re.sub(r' +', ' ', text).strip()
 
-    if unique_emails:
-        logger.debug("Removed %d emails:\n%s", email_count, "\n".join(unique_emails))
-    else:
-        logger.debug("Removed %d emails", email_count)
+    #logger.debug("Removed %d emails:\n%s", email_count, "\n".join(unique_emails))
+    logger.debug("Removed %d emails", email_count)
 
-    if unique_urls:
-        logger.debug("Removed %d URLs:\n%s", url_count, "\n".join(unique_urls))
-    else:
-        logger.debug("Removed %d URLs", url_count)
+    #logger.debug("Removed %d URLs:\n%s", url_count, "\n".join(unique_urls))
+    logger.debug("Removed %d URLs", url_count)
 
     logger.debug("Removed %d empty parentheses/brackets", paren_count)
 
@@ -452,12 +530,89 @@ def remove_metadata(text: str) -> str:
 
     return "\n".join(cleaned)
 
+def is_likely_graph_noise(text: str) -> str:
+    """Removes lines that are likely noise from graphs or diagrams."""
+    lines = text.split("\n")
+    cleaned_lines: list[str] = []
+    removed_count = 0
+
+    for line in lines:
+        stripped = line.strip()
+
+        if not stripped:
+            cleaned_lines.append(line)
+            continue
+
+        # keep lists with bullets or numbering
+        if stripped.startswith(("- ", "* ", "1. ", "|", "#")):
+            cleaned_lines.append(line)
+            continue
+
+        # Remove isolated numbers (graph axes)
+        if re.fullmatch(r"^\d+[\s%°]*$", stripped):
+            logger.debug(
+                "Graph-noise check: isolated numeric axis-like line -> remove | line=%r",
+                stripped[:120],
+            )
+            removed_count += 1
+            continue
+
+        # Remove isolated single-character legend markers
+        if re.fullmatch(r"[A-Za-z]", stripped):
+            logger.debug("Removed single-character legend marker: %r", stripped)
+            removed_count += 1
+            continue
+
+        # Remove legend entries like "A Something" or "b Something"
+        if re.fullmatch(r"[A-Za-z]\s+.{1,50}", stripped):
+            logger.debug("Removed legend-style line: %r", stripped[:120])
+            removed_count += 1
+            continue
+
+        # Remove bullet/symbol legend entries like "· ..." or "› ..."
+        if re.fullmatch(r"[·›•]\s+.+", stripped):
+            logger.debug("Removed symbol legend line: %r", stripped[:120])
+            removed_count += 1
+            continue
+
+        # Remove heavily symbolic / corrupted lines
+        if re.search(r"[@д]|0000|[|%°]", stripped) and len(stripped) < 40:
+            logger.debug("Removed corrupted graph-noise line: %r", stripped[:120])
+            removed_count += 1
+            continue
+
+        # Remove very short fragments without real word characters.
+        if len(stripped) < 10 and not any(c.isalpha() for c in stripped):
+            logger.debug(
+                "Graph-noise check: short non-alpha fragment -> remove | line=%r",
+                stripped[:120],
+            )
+            removed_count += 1
+            continue
+
+        # Special case: fragments with typical axis special characters.
+        if re.search(r"[|%-]{2,}", stripped) and len(stripped) < 15:
+            logger.debug(
+                "Graph-noise check: axis special-character fragment -> remove | line=%r",
+                stripped[:120],
+            )
+            removed_count += 1
+            continue
+
+        cleaned_lines.append(line)
+
+    if removed_count > 0:
+        logger.info("Removed %d likely graph-noise lines", removed_count)
+
+    return "\n".join(cleaned_lines)
+
 # ---------------- Main pipeline ----------------------------
 
 def clean_markdown_text(text: str,
                         filename: str = "unknown",
-                        author: str | str = None,
-                        journal: str | str = None) -> str:
+                        author: str | None = None,
+                        journal: str | None = None,
+                        title: str | bool | None = None) -> str:
     """Runs the full cleaning pipeline on the extracted Markdown text."""
     logger.debug("Starting cleaning pipeline for %s", filename)
 
@@ -467,6 +622,7 @@ def clean_markdown_text(text: str,
     text = remove_image_placeholders(text)
     text = fix_spaced_caps(text)
     text = add_markdown_headers(text)
+    text = clean_headers(text, title=title)
     text = remove_citation_markers(text)
 
     # Phase 2
@@ -476,6 +632,7 @@ def clean_markdown_text(text: str,
     # Phase 3
     text = remove_metadata(text)
     text = clean_urls_and_emails(text)
+    text = is_likely_graph_noise(text)
 
     # cleanup multiple newlines and trim
     text = re.sub(r'\n{3,}', '\n\n', text).strip()
