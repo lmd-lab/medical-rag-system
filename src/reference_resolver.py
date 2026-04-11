@@ -280,7 +280,8 @@ def query_crossref_by_text(query: str, base_url: str) -> dict:
                 score = best_match.get("score", 0)
                 if score < CROSSREF_MIN_SCORE:
                     logger.debug(
-                        "Crossref candidate rejected for query '%s' (score=%s, threshold=%s, title='%s')",
+                        "Crossref candidate rejected for query '%s' "
+                        "(score=%s, threshold=%s, title='%s')",
                         query,
                         score,
                         CROSSREF_MIN_SCORE,
