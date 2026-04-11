@@ -18,6 +18,7 @@ from config import RAW_DATA_PATH, PROCESSED_DATA_PATH
 from src.patterns import DOI_REGEX, PMID_REGEX
 from src.cleaning import clean_markdown_text
 from src.reference_resolver import get_reference
+from src.chunking import add_chunks_to_document
 
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
@@ -89,8 +90,8 @@ def extract_text(pdf_path: Path) -> dict[str, Any]:
     pipeline_options = PdfPipelineOptions()
     pipeline_options.do_ocr = True
     pipeline_options.generate_page_images = False
-    pipeline_options.generate_table_images = False  # no pictures of tables?
-    pipeline_options.do_table_structure = True # skips tables
+    pipeline_options.generate_table_images = False
+    pipeline_options.do_table_structure = True
     pipeline_options.table_structure_options.do_cell_matching = True
 
     converter = DocumentConverter(
@@ -127,7 +128,8 @@ def extract_text(pdf_path: Path) -> dict[str, Any]:
         cleaned_markdown = clean_markdown_text(markdown_text,
                                                filename=pdf_path.name,
                                                author=reference.get("first_author"),
-                                               journal=reference.get("journal"))
+                                               journal=reference.get("journal"),
+                                               title=reference.get("title"))
 
 
         return {
@@ -217,7 +219,7 @@ def save_documents_to_processed(
 if __name__ == "__main__":
     # Procsessing
     documents = load_all_pdfs(RAW_DATA_PATH)
-    #documents = [add_chunks_to_document(doc) for doc in documents if "text" in doc]
+    documents = [add_chunks_to_document(doc) for doc in documents if "text" in doc]
     processed_files = save_documents_to_processed(documents, PROCESSED_DATA_PATH)
 
     # Stats & Validation Setup
@@ -248,4 +250,3 @@ if __name__ == "__main__":
 
     logger.info("Quality stats: %s", quality_counts)
     logger.info("Reference stats: %s", reference_stats)
-
