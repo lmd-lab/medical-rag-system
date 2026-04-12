@@ -80,3 +80,4 @@ src/patterns.py
 
 # Logs
 Logs/*
+Tests/*
