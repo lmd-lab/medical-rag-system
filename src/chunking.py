@@ -1,5 +1,5 @@
 """
-Improved chunking module for medical RAG:
+Chunking module for medical RAG:
 - Removes figure captions
 - Extracts tables and merges captions
 - Adds metadata + logging
@@ -21,7 +21,7 @@ from src.patterns import SKIP_HEADERS
 os.makedirs("Logs", exist_ok=True)
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-log_filename = f"Logs/chunking_{timestamp}.log"
+log_filename: str = f"Logs/chunking_{timestamp}.log"
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -35,6 +35,9 @@ if not logger.handlers:
 # ---------------- Helper Functions ----------------
 
 def normalize_text(text: str) -> str:
+    """Basic text normalization to clean up
+    whitespace and hyphenation artifacts.
+    """
     text = re.sub(r"-\n", "", text)
     text = re.sub(r"\n+", " ", text)
     text = re.sub(r"\s+", " ", text)
@@ -42,8 +45,9 @@ def normalize_text(text: str) -> str:
 
 
 def is_skip_header(header: str) -> bool:
+    """Determines if a header should be skipped based on patterns"""
     header_clean = header.lower().strip().rstrip(":.")
-    
+
     degree_pattern = r"\b(md|phd|dds|rn|bsn|faan|faap|chtp|msc|mba)\b"
 
     # Case 1: exact skip headers
@@ -61,18 +65,22 @@ def is_skip_header(header: str) -> bool:
 
 
 def is_figure_caption(line: str) -> bool:
+    """Determines if a line is a figure caption"""
     return bool(re.match(r"^(Figure|Fig\.?)\s*\d+", line.strip(), re.IGNORECASE))
 
 
 def is_table_caption(line: str) -> bool:
+    """Determines if a line is a table caption"""
     return bool(re.match(r"^Table\s*\d+", line.strip(), re.IGNORECASE))
 
 
 def is_table_line(line: str) -> bool:
+    """Determines if a line is part of a table"""
     return line.strip().startswith("|")
 
 
 def is_low_information(text: str) -> tuple[bool, str]:
+    """Heuristic checks to identify low-information content"""
     words = text.split()
 
     if len(words) < 3:
@@ -84,7 +92,7 @@ def is_low_information(text: str) -> tuple[bool, str]:
 
     if re.fullmatch(r"[\d\s\.,%-]+", text):
         return True, "numeric_line"
-    
+
     if re.fullmatch(r"[\s\.,%\-\|/]+", text):
         return True, "junk_characters"
 
@@ -99,6 +107,8 @@ def split_into_chunks_markdown(
     base_metadata: dict[str, Any],
     max_words: int = 250
 ) -> list[dict[str, Any]]:
+    """Splits markdown text into chunks 
+    based on headers, captions, and tables."""
     header_pattern = r"(^#+\s+.*$)"
     chunks: list[dict[str, Any]] = []
     removal_stats: dict[str, dict[str, int]] = {}
@@ -233,175 +243,11 @@ def split_into_chunks_markdown(
         total_events = sum(stats.values())
         if total_events > 0:
             logger.info(
-                "Section summary | section='%s' | skipped_lines=%d | captions_attached=%d | low_info_text=%d | low_info_tables=%d",
+                "Section summary | section='%s' | skipped_lines=%d |" \
+                "captions_attached=%d | low_info_text=%d | low_info_tables=%d",
                 section,
                 stats["skipped_section_lines"],
                 stats["captions_attached"],
-                stats["low_info_text_chunks"],
-                stats["low_info_tables"],
-            )
-
-    return chunks
-
-def split_into_chunks_markdown_alt(
-    text: str,
-    base_metadata: dict[str, Any],
-    max_words: int = 250
-) -> list[dict[str, Any]]:
-
-    header_pattern = r"(^#+\s+.*$)"
-
-    chunks = []
-    current_header = "Intro"
-    removal_stats: dict[str, dict[str, int]] = {}
-
-    lines = text.split("\n")
-
-    # --- TABLE STATE ---
-    table_buffer = []
-    last_table_caption = None
-
-    # --- TEXT BUFFER ---
-    current_text = ""
-
-    def ensure_section_stats(header: str) -> dict[str, int]:
-        if header not in removal_stats:
-            removal_stats[header] = {
-                "skipped_section_lines": 0,
-                "figure_captions": 0,
-                "low_info_text_chunks": 0,
-                "low_info_tables": 0,
-            }
-        return removal_stats[header]
-
-    def flush_text():
-        nonlocal current_text
-
-        if not current_text.strip():
-            return
-
-        clean = normalize_text(current_text)
-        is_bad, reason = is_low_information(clean)
-
-        if is_bad:
-            section_stats = ensure_section_stats(current_header)
-            section_stats["low_info_text_chunks"] += 1
-            logger.info(
-                "Removed text chunk (%s) | %s: %r",
-                reason, current_header, clean[:80]
-            )
-        else:
-            chunks.append({
-                "chunk_id": uuid.uuid4().hex,
-                "chunk_type": "text",
-                "text": clean,
-                "metadata": {
-                    "header": current_header,
-                    **base_metadata
-                }
-            })
-
-        current_text = ""
-
-    def flush_table():
-        nonlocal table_buffer, last_table_caption
-
-        if not table_buffer:
-            return
-
-        table_text = "\n".join(table_buffer)
-        clean = normalize_text(table_text)
-
-        is_bad, reason = is_low_information(clean)
-
-        if is_bad:
-            section_stats = ensure_section_stats(current_header)
-            section_stats["low_info_tables"] += 1
-            logger.info(
-                "Removed table (%s) | %s: %r",
-                reason, current_header, clean[:80]
-            )
-        else:
-            chunks.append({
-                "chunk_id": uuid.uuid4().hex,
-                "chunk_type": "table",
-                "text": clean,
-                "metadata": {
-                    "header": current_header,
-                    "caption": last_table_caption,
-                    **base_metadata
-                }
-            })
-
-        table_buffer = []
-        last_table_caption = None
-
-    skip_section = False
-
-    for line in lines:
-        stripped = line.strip()
-
-        # --- HEADER ---
-        if re.match(header_pattern, line):
-            flush_text()
-            flush_table()
-
-            current_header = normalize_text(line.replace("#", ""))
-
-            if is_skip_header(current_header):
-                logger.info("Skipping section: %s", current_header)
-                skip_section = True
-            else:
-                skip_section = False
-
-            continue
-
-        if skip_section:
-            section_stats = ensure_section_stats(current_header)
-            section_stats["skipped_section_lines"] += 1
-            continue
-
-        # --- FIGURE CAPTION ---
-        if is_figure_caption(stripped):
-            section_stats = ensure_section_stats(current_header)
-            section_stats["figure_captions"] += 1
-            logger.info("Removed figure caption: %s", stripped[:80])
-            continue
-
-        # --- TABLE CAPTION ---
-        if is_table_caption(stripped):
-            last_table_caption = stripped
-            continue
-
-        # --- TABLE LINE ---
-        if is_table_line(line):
-            table_buffer.append(line)
-            continue
-        else:
-            # table ended
-            if table_buffer:
-                flush_table()
-
-        # --- NORMAL TEXT ---
-        if stripped:
-            current_text += " " + stripped
-
-            # chunk split by size
-            if len(current_text.split()) > max_words:
-                flush_text()
-
-    # final flush
-    flush_text()
-    flush_table()
-
-    for section, stats in removal_stats.items():
-        total_removed = sum(stats.values())
-        if total_removed > 0:
-            logger.info(
-                "Removal summary | section='%s' | skipped_lines=%d | figure_captions=%d | low_info_text=%d | low_info_tables=%d",
-                section,
-                stats["skipped_section_lines"],
-                stats["figure_captions"],
                 stats["low_info_text_chunks"],
                 stats["low_info_tables"],
             )
