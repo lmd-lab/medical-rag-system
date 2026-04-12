@@ -7,6 +7,7 @@ dependencies:
   - cxx-compiler
   - cmake
   - setuptools
+  - ipykernel
   - pip:
       - python-dotenv
       - numpy>=2.0.0
