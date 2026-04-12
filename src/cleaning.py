@@ -172,8 +172,9 @@ def clean_headers(text: str, title: str | bool | None) -> str:
             if title and isinstance(title, str):
                 clean_title = title.strip().lower().rstrip('.')
                 clean_header = header_content.lower().rstrip('.')
-                
-                if clean_header == clean_title or SequenceMatcher(None, clean_header, clean_title).ratio() > 0.9:
+
+                if (clean_header == clean_title or
+                    SequenceMatcher(None, clean_header, clean_title).ratio() > 0.9):
                     stats["deleted_title_match"] += 1
                     logger.debug("Deleted heading matching title: %s", header_content)
                     continue
