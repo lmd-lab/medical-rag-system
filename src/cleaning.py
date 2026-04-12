@@ -6,8 +6,6 @@ PDF text cleaning pipeline:
 4. URL / email cleanup
 """
 
-# TODO: Refactoring
-
 import html
 import logging
 import os
