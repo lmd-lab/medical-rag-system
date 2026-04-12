@@ -530,7 +530,7 @@ def remove_metadata(text: str) -> str:
 
     return "\n".join(cleaned)
 
-def is_likely_graph_noise(text: str) -> str:
+def remove_graph_noise(text: str) -> str:
     """Removes lines that are likely noise from graphs or diagrams."""
     lines = text.split("\n")
     cleaned_lines: list[str] = []
@@ -564,7 +564,8 @@ def is_likely_graph_noise(text: str) -> str:
             continue
 
         # Remove legend entries like "A Something" or "b Something"
-        if re.fullmatch(r"[A-Za-z]\s+.{1,50}", stripped):
+        pattern = r"^[A-Za-z]\s+\S{1,10}(?:\s+\S+){0,2}$"
+        if re.fullmatch(pattern, stripped) and len(stripped) < 30:
             logger.debug("Removed legend-style line: %r", stripped[:120])
             removed_count += 1
             continue
@@ -632,7 +633,7 @@ def clean_markdown_text(text: str,
     # Phase 3
     text = remove_metadata(text)
     text = clean_urls_and_emails(text)
-    text = is_likely_graph_noise(text)
+    text = remove_graph_noise(text)
 
     # cleanup multiple newlines and trim
     text = re.sub(r'\n{3,}', '\n\n', text).strip()
