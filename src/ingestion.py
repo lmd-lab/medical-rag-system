@@ -109,6 +109,16 @@ def extract_text(pdf_path: Path) -> dict[str, Any]:
         # check quality and get doi
         quality, quality_reason = classify_basic_text_quality(markdown_text)
 
+        if quality in ("empty", "artifact"):
+            logger.warning("Skipping %s: %s", pdf_path.name, quality_reason)
+            return {
+                "filename": pdf_path.name,
+                "path": str(pdf_path),
+                "quality": quality,
+                "quality_reason": quality_reason,
+                "text": "",
+            }
+
         # get doi and pmid
         doi = extract_doi(markdown_text)
         pmid = extract_pmid(markdown_text)
@@ -218,9 +228,11 @@ def save_documents_to_processed(
 
 if __name__ == "__main__":
     # Procsessing
-    documents = load_all_pdfs(RAW_DATA_PATH)
-    documents = [add_chunks_to_document(doc) for doc in documents if "text" in doc]
-    processed_files = save_documents_to_processed(documents, PROCESSED_DATA_PATH)
+    all_documents = load_all_pdfs(RAW_DATA_PATH)
+    good_documents = [add_chunks_to_document(doc) for doc in all_documents 
+                      if doc.get("quality") == "good"]
+    processed_files = save_documents_to_processed(good_documents, PROCESSED_DATA_PATH)
+
 
     # Stats & Validation Setup
     quality_counts = {"good": 0, "empty": 0, "artifact": 0}
@@ -234,7 +246,7 @@ if __name__ == "__main__":
             "fallback": 0,
         }
 
-    for doc in documents:
+    for doc in all_documents:
         # A. Quality Check
         q = doc.get("quality")
         if q in quality_counts:
