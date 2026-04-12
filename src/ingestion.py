@@ -41,7 +41,7 @@ load_dotenv()
 
 def extract_doi(text: str) -> str | None:
     """Extracts the DOI from the text using a regex pattern"""
-    first_part = text[:6000] # only the first 1-2 pages
+    first_part = text[:6000] 
 
     match = DOI_REGEX.search(first_part)
     if match:
@@ -229,7 +229,7 @@ def save_documents_to_processed(
 if __name__ == "__main__":
     # Procsessing
     all_documents = load_all_pdfs(RAW_DATA_PATH)
-    good_documents = [add_chunks_to_document(doc) for doc in all_documents 
+    good_documents = [add_chunks_to_document(doc) for doc in all_documents
                       if doc.get("quality") == "good"]
     processed_files = save_documents_to_processed(good_documents, PROCESSED_DATA_PATH)
 
