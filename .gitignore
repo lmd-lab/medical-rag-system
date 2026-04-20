@@ -39,6 +39,9 @@ __pycache__/
 *.log
 logs/
 
+# huggingface cache
+.cache
+
 # Streamlit cache
 .streamlit/
 
