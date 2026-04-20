@@ -4,10 +4,10 @@ from sentence_transformers import SentenceTransformer
 
 model = SentenceTransformer("BAAI/bge-m3")
 
-
 def retrieve(query, embeddings, chunks, top_k=5):
-    """Retrieves the top_k most relevant chunks for 
-    the given query based on cosine similarity."""
+    """Retrieves the most relevant chunks for a 
+    given query based on cosine similarity."""
+    # --- Prepare query ---
     query = "query: " + query
 
     query_embedding = model.encode(
@@ -15,8 +15,49 @@ def retrieve(query, embeddings, chunks, top_k=5):
         normalize_embeddings=True
     )
 
+    # --- Cosine similarity ---
     scores = cosine_similarity(query_embedding, embeddings)[0]
 
-    top_idx = scores.argsort()[-top_k:][::-1]
+    # --- Score + Chunk  ---
+    scored_chunks = []
+    for i, chunk in enumerate(chunks):
+        score = scores[i]
 
-    return [chunks[i] for i in top_idx]
+        # minimal bonus for newer papers
+        year = chunk.get("metadata", {}).get("year")
+        try:
+            year = int(year)
+            score += (year - 2000) * 0.001
+        except (TypeError, ValueError):
+            pass
+        scored_chunks.append((score, chunk))
+
+    # --- sort ---
+    scored_chunks.sort(key=lambda x: x[0], reverse=True)
+
+    # --- remove duplicates ---
+    seen_texts = set()
+    unique_chunks = []
+
+    for score, chunk in scored_chunks:
+        text = chunk.get("text", "")
+
+        if text not in seen_texts:
+            seen_texts.add(text)
+            unique_chunks.append((score, chunk))
+
+    # --- one chunk per reference ---
+    seen_refs = set()
+    final_chunks = []
+
+    for score, chunk in unique_chunks:
+        ref = chunk.get("metadata", {}).get("reference")
+
+        if ref not in seen_refs:
+            seen_refs.add(ref)
+            final_chunks.append(chunk)
+
+        if len(final_chunks) >= top_k:
+            break
+
+    return final_chunks
