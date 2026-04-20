@@ -23,7 +23,11 @@ def retrieve(query, embeddings, chunks, top_k=5):
     for i, chunk in enumerate(chunks):
         score = scores[i]
 
+<<<<<<< HEAD
         # minimal bonus for newer papers
+=======
+        # minimal bonus for newer papers 
+>>>>>>> 9a6eb1da4c9f474d55d81e4acad66315bb08d239
         year = chunk.get("metadata", {}).get("year")
         try:
             year = int(year)
