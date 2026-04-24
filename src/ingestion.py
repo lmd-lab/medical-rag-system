@@ -41,7 +41,7 @@ load_dotenv()
 
 def extract_doi(text: str) -> str | None:
     """Extracts the DOI from the text using a regex pattern"""
-    first_part = text[:6000] 
+    first_part = text[:6000]
 
     match = DOI_REGEX.search(first_part)
     if match:
