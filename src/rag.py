@@ -1,8 +1,25 @@
 """This module implements the retrieval function for the RAG system."""
+import os
+from dotenv import load_dotenv
+from pathlib import Path
+from groq import Groq
+
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
 
+load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
+
+RAG_PROMPT = os.getenv("RAG_PROMPT", "Answer the question based on the following context:\n\n{context}\n\nQuestion: {query}\nAnswer:")
+
 model = SentenceTransformer("BAAI/bge-m3")
+
+def get_client():
+    api_key = os.getenv("GROQ_API_KEY")
+
+    if not api_key:
+        raise ValueError("GROQ_API_KEY not found. Check your .env file.")
+
+    return Groq(api_key=api_key)
 
 def retrieve(query, embeddings, chunks, top_k=5):
     """Retrieves the most relevant chunks for a 
@@ -23,11 +40,7 @@ def retrieve(query, embeddings, chunks, top_k=5):
     for i, chunk in enumerate(chunks):
         score = scores[i]
 
-<<<<<<< HEAD
         # minimal bonus for newer papers
-=======
-        # minimal bonus for newer papers 
->>>>>>> 9a6eb1da4c9f474d55d81e4acad66315bb08d239
         year = chunk.get("metadata", {}).get("year")
         try:
             year = int(year)
@@ -65,3 +78,50 @@ def retrieve(query, embeddings, chunks, top_k=5):
             break
 
     return final_chunks
+
+
+def generate_answer(query, embeddings, chunks, top_k=5) -> str:
+    """Generates an answer for the given query using retrieved chunks and Groq LLM."""
+    client = get_client()
+
+    # --- 1. Retrieval ---
+    retrieved_chunks = retrieve(query, embeddings, chunks, top_k=top_k)
+
+    # --- 2. Context build ---
+    context_blocks = []
+    sources = []
+
+    for i, chunk in enumerate(retrieved_chunks):
+        text = chunk.get("text", "")
+        meta = chunk.get("metadata", {})
+
+        ref = meta.get("reference") or "Unknown source"
+
+        context_blocks.append(f"[{i+1}] {text}")
+        sources.append(f"[{i+1}] {ref}")
+
+    context = "\n\n".join(context_blocks)
+
+    # --- 3. Prompt ---
+    prompt = RAG_PROMPT.format(
+            context=context,
+            query=query
+        )
+
+    # --- 4. LLM Call (Groq) ---
+    response = client.chat.completions.create(
+        model="llama-3.1-8b-instant", 
+        messages=[
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.2  # less hallucinations, more focused on the context
+    )
+
+    answer = response.choices[0].message.content
+
+    # --- 5. Sources append ---
+    sources_text = "\n".join(sources)
+
+    final_answer = f"{answer}\n\nSources:\n{sources_text}"
+
+    return final_answer
